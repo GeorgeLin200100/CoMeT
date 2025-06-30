@@ -1,0 +1,4 @@
+*.o
+*.sqlite3
+sim.out
+sim.stats.sqlite3
