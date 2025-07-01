@@ -63,3 +63,6 @@ ifneq ($(CLEAN),)
 clean:
 	-rm -f $(TARGET) $(OBJECTS) $(OBJECTS:%.o=%.d)
 endif
+
+standalone-dramtrace: dram_trace_replay.o
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LIBS)
