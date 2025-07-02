@@ -4,6 +4,9 @@
 *.log
 *.trace
 *.a
+sim.info
+sim.stats.sqlite3
+bank_access/dram_trace_replay
 config/buildconf.makefile
 config/buildconf.sh
 config/sniper.py
@@ -36,3 +39,6 @@ test/thermal_example/all_transient_mem.init
 test/thermal_example/energystats-temp.*
 test/thermal_example/sim.*
 test/thermal_example/temperature_mem.init
+test/true/true
+test/true/true.o
+test/

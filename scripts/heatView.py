@@ -156,10 +156,12 @@ def parse_tfile(tfilename, orig_line):
         print ("DEBUG::Temperature trace:\n%s" %line)
     for value in line[0:total_cores]:
         temperatures_core[i] = float(value)
+        #temperatures_core[i] = float(value) + 10.0
         i+=1
     i = 0
     for value in line[total_cores:]:
         temperatures_bank[i] = float(value)
+        #temperatures_bank[i] = float(value) + 10.0
         i+=1
 
 def parse_tfile_header(tfilename, orig_line):

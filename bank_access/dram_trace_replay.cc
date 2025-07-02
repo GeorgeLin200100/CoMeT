@@ -1,7 +1,9 @@
 #include "simulator.h"
 #include "system/core_manager.h"
+#include "performance_model/shmem_perf_model.h"
 #include "core/core.h"
-#include "config.hpp"
+//#include "config.hpp"
+#include "config_file.hpp"
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -14,7 +16,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Initialize simulator with config
-    config::Config *cfg = new config::Config(argv[1]);
+    config::Config *cfg = new config::ConfigFile(argv[1]);
     Simulator::setConfig(cfg, Config::STANDALONE);
     Simulator::allocate();
     Sim()->start();

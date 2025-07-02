@@ -12,7 +12,7 @@ int main()
         array1[i] = rand() % 1024;
     }
     SimRoiStart();
-    for (register int j = 0; j < 100; j++){
+    for (register int j = 0; j < 1000; j++){
         for(register int i = 0; i < LENGTH; i++){
             array[i] = rand() % 1024;
         }
