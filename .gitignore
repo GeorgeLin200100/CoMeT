@@ -4,6 +4,9 @@
 *.log
 *.trace
 *.a
+*.png
+*.s
+*.avi
 sim.info
 sim.stats.sqlite3
 bank_access/dram_trace_replay
@@ -41,4 +44,9 @@ test/thermal_example/sim.*
 test/thermal_example/temperature_mem.init
 test/true/true
 test/true/true.o
-test/
+test/single_2/hotspot/
+test/single_2/energystats-temp*
+test/single_2/all_transient_mem.init
+test/single_2/sim.scripts.py
+test/single_2/temperature_mem.init
+test/single_2/test

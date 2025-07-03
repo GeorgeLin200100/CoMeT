@@ -15,6 +15,7 @@
 #include "config.hpp"
 #include "config.h"
 #include "math.h"
+#include "dram_va2pa.h"
 
 using namespace std;
 
@@ -77,7 +78,6 @@ UInt64 write_adv_count;
 
 UInt32 MCP_FLAG;
 
-
 //#define CALL_TRACE 0
 
 void read_memory_config(core_id_t requester)
@@ -132,10 +132,13 @@ dram_read_trace(IntPtr address, core_id_t requester, SubsecondTime now, UInt64 m
         //read_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + (requester/memory_controllers_interleaving);
         
         if(TYPE_OF_STACK ==  "3Dmem" || TYPE_OF_STACK == "2.5D") {
-            if(ENABLE_CHANNEL_PARTITIONING)
+            if(ENABLE_CHANNEL_PARTITIONING) {
                 read_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + (requester/memory_controllers_interleaving);
+                read_bank_accessed = dram_va2pa(read_bank_accessed, 0);
+            }
             else {
                 read_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + MCP_FLAG % NUM_OF_CHANNELS;
+                read_bank_accessed = dram_va2pa(read_bank_accessed, 0);
                 MCP_FLAG++;
                 if(MCP_FLAG == NUM_OF_CHANNELS)
                     MCP_FLAG = 0;
@@ -143,10 +146,13 @@ dram_read_trace(IntPtr address, core_id_t requester, SubsecondTime now, UInt64 m
         }
         else {
             if(TYPE_OF_STACK == "3D") {
-                if(ENABLE_CHANNEL_PARTITIONING)
+                if(ENABLE_CHANNEL_PARTITIONING) {
                     read_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + (requester/memory_controllers_interleaving);
+                    read_bank_accessed = dram_va2pa(read_bank_accessed, 0);
+                }
                 else {
                     read_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + MCP_FLAG % (NUM_OF_CHANNELS*1);
+                    read_bank_accessed = dram_va2pa(read_bank_accessed, 0);
                     MCP_FLAG++;
                     if(MCP_FLAG == (NUM_OF_CHANNELS*1))
                         MCP_FLAG = 0;
@@ -155,6 +161,7 @@ dram_read_trace(IntPtr address, core_id_t requester, SubsecondTime now, UInt64 m
             else {
                 if(TYPE_OF_STACK ==  "DDR") {
                     read_bank_accessed = ((address & BANK_MASK) >> BANK_OFFSET_IN_PA);
+                    read_bank_accessed = dram_va2pa(read_bank_accessed, 0);
                 }
                 else {
                     printf("Invalid type of stack\n");
@@ -164,11 +171,8 @@ dram_read_trace(IntPtr address, core_id_t requester, SubsecondTime now, UInt64 m
             
         }
         
-
-        //printf("\nRead banked accessed %d\n", read_bank_accessed) ;
-
         UInt64 current_time = now.getUS();
-        //printf("Current time is %lu\n", current_time);
+        //printf("\nRead banked accessed %d, address %ld, Current time is %lu\n", read_bank_accessed, address, current_time) ;
         
         
         if (current_time > ACCUMULATION_TIME + read_interval_start_time){
@@ -254,10 +258,13 @@ dram_write_trace(IntPtr address, core_id_t requester, SubsecondTime now, UInt64 
         //write_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + (requester/memory_controllers_interleaving);
 
         if(TYPE_OF_STACK ==  "3Dmem" || TYPE_OF_STACK == "2.5D") {
-            if(ENABLE_CHANNEL_PARTITIONING)
+            if(ENABLE_CHANNEL_PARTITIONING) {
                 write_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + (requester/memory_controllers_interleaving);
+                write_bank_accessed = dram_va2pa(write_bank_accessed, 0);
+            }
             else {
                 write_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + MCP_FLAG % NUM_OF_CHANNELS;
+                write_bank_accessed = dram_va2pa(write_bank_accessed, 0);
                 MCP_FLAG++;
                 if(MCP_FLAG == NUM_OF_CHANNELS)
                     MCP_FLAG = 0;
@@ -265,10 +272,13 @@ dram_write_trace(IntPtr address, core_id_t requester, SubsecondTime now, UInt64 
         }
         else {
             if(TYPE_OF_STACK == "3D") {
-                if(ENABLE_CHANNEL_PARTITIONING)
+                if(ENABLE_CHANNEL_PARTITIONING) {
                     write_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + (requester/memory_controllers_interleaving);
+                    write_bank_accessed = dram_va2pa(write_bank_accessed, 0);
+                }
                 else {
                     write_bank_accessed = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + MCP_FLAG % (NUM_OF_CHANNELS*1);
+                    write_bank_accessed = dram_va2pa(write_bank_accessed, 0);
                     MCP_FLAG++;
                     if(MCP_FLAG == (NUM_OF_CHANNELS*1))
                         MCP_FLAG = 0;
@@ -277,6 +287,7 @@ dram_write_trace(IntPtr address, core_id_t requester, SubsecondTime now, UInt64 
             else {
                 if(TYPE_OF_STACK ==  "DDR") {
                     write_bank_accessed = ((address & BANK_MASK) >> BANK_OFFSET_IN_PA);
+                    write_bank_accessed = dram_va2pa(write_bank_accessed, 0);
                 }
                 else {
                     printf("Invalid type of stack\n");
@@ -286,9 +297,8 @@ dram_write_trace(IntPtr address, core_id_t requester, SubsecondTime now, UInt64 
             
         }
         
-        //printf("\nWrite banked accessed %d\n", write_bank_accessed) ;
         UInt64 current_time = now.getUS();
-        //printf("Current time is put()%u\n", current_time);
+        //printf("\nWrite banked accessed %d, address %ld, Current time is %lu\n", write_bank_accessed, address, current_time) ;
         
         
         if (current_time > ACCUMULATION_TIME + write_interval_start_time){
@@ -349,10 +359,12 @@ get_address_bank(IntPtr address, core_id_t requester)
     if(TYPE_OF_STACK ==  "3Dmem" || TYPE_OF_STACK == "2.5D") {
         if(ENABLE_CHANNEL_PARTITIONING) {
             bank = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + (requester/memory_controllers_interleaving);
+            bank = dram_va2pa(bank, 0);
             return bank;
         }
         else {
             bank = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + MCP_FLAG % NUM_OF_CHANNELS;
+            bank = dram_va2pa(bank, 0);
             return bank;
         }
     }
@@ -361,16 +373,19 @@ get_address_bank(IntPtr address, core_id_t requester)
             if(ENABLE_CHANNEL_PARTITIONING)
             {
                 bank = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + (requester/memory_controllers_interleaving);
+                bank = dram_va2pa(bank, 0);
                 return bank;
             }
             else {
                 bank = (((address & BANK_MASK) >> BANK_OFFSET_IN_PA) & BANKS_PER_CHANNEL) * BANKS_PER_LAYER + MCP_FLAG % (NUM_OF_CHANNELS*1);
+                bank = dram_va2pa(bank, 0);
                 return bank;
             }
         }
         else {
             if(TYPE_OF_STACK ==  "DDR") {
                 bank = ((address & BANK_MASK) >> BANK_OFFSET_IN_PA);
+                bank = dram_va2pa(bank, 0);
                 return bank;
             }
             else {
