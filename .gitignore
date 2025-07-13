@@ -24,6 +24,8 @@ test/dram-access-trace/test
 test/dram-access-trace/sim.*
 test/dvfs/dvfs
 test/dvfs/sim.*
+test/multiple_core/sim.cfg
+test/multiple_core/test
 test/test-installation/test
 test/test-installation/test_summary.txt
 test/demo-scheduling/fft.c
