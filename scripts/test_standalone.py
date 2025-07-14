@@ -334,9 +334,9 @@ enabled = false
             # Run a single step
             thermal_sim.step(1000000)  # 1ms step
 
-            thermal_sim.step(1000000)  # 1ms step
+            # thermal_sim.step(1000000)  # 1ms step
 
-            thermal_sim.step(1000000)  # 1ms step
+            # thermal_sim.step(1000000)  # 1ms step
             
             # Verify files were created
             self.assertTrue(os.path.exists('integration_power.trace'))

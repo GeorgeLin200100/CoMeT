@@ -516,14 +516,14 @@ class StandaloneMemTherm:
             core_power_data = '\t'.join(['0.1'] * self.NUM_CORES)
             power_trace += core_power_data
         
-        power_trace += "\r\n"
+        power_trace += "\n"
         
         # Write power trace to file
-        if not os.path.exists(self.power_trace_file):
-            with open(self.power_trace_file, "w") as f:
-                f.write(self.gen_ptrace_header())
+        # if not os.path.exists(self.power_trace_file):
+        #     with open(self.power_trace_file, "w") as f:
+        #         f.write(self.gen_ptrace_header())
         with open(self.power_trace_file, "a") as f:
-            f.write(power_trace)
+            f.write("%s\n" %(power_trace))
         f.close()
         
         return power_trace
