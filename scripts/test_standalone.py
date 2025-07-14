@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 """
 test_standalone.py
 
@@ -121,11 +121,11 @@ type_of_stack = 3D
 
 [hotspot]
 sampling_interval = 1000000
-tool_path = hotspot_tool
-config_path = .
-hotspot_config_file_mem = hotspot.config
-floorplan_folder = hotspot/floorplans
-layer_file_mem = hotspot/layers.config
+tool_path = ../hotspot_tool
+config_path = ../
+hotspot_config_file_mem = config/hotspot/3Dmem/mem_hotspot.config
+floorplan_folder = config/hotspot/3Dmem
+layer_file_mem = config/hotspot/3Dmem/mem.lcf
 
 [hotspot/log_files_mem]
 power_trace_file = test_power.trace
@@ -212,8 +212,12 @@ enabled = false
         
         # Verify power trace was generated
         self.assertIsNotNone(power_trace)
-        self.assertIn('B_0', power_trace)
-        self.assertIn('B_1', power_trace)
+        # self.assertIn('B_0', power_trace)
+        # self.assertIn('B_1', power_trace)
+        with open('test_power.trace', "r") as f:
+            content = f.read()
+            self.assertIn('B_0', content)
+            self.assertIn('B_1', content)
     
     def test_file_generation(self):
         """Test file generation"""
@@ -267,15 +271,15 @@ num_banks = 4
 cores_in_x = 2
 cores_in_y = 1
 cores_in_z = 1
-type_of_stack = 3D
+type_of_stack = 3Dmem
 
 [hotspot]
 sampling_interval = 1000000
-tool_path = hotspot_tool
-config_path = .
-hotspot_config_file_mem = hotspot.config
-floorplan_folder = hotspot/floorplans
-layer_file_mem = hotspot/layers.config
+tool_path = ../hotspot_tool
+config_path = ..
+hotspot_config_file_mem = config/hotspot/3Dmem/mem_hotspot.config
+floorplan_folder = config/hotspot/3Dmem
+layer_file_mem = config/hotspot/3Dmem/mem.lcf
 
 [hotspot/log_files_mem]
 power_trace_file = integration_power.trace

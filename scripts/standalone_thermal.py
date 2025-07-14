@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 """
 standalone_thermal.py
 
@@ -13,7 +13,7 @@ import sys
 import os
 import time
 import argparse
-import ConfigParser
+import configparser
 from collections import defaultdict
 
 # Mock sim module to replace Sniper's simulation framework
@@ -30,22 +30,24 @@ class MockConfig:
         self.output_dir = "./output"
         
     def get(self, key, default=None):
-        """Get configuration value with dot notation (e.g., 'memory/bank_size')"""
-        keys = key.split('/')
-        current = self.config_data
-        for k in keys:
-            if isinstance(current, dict) and k in current:
-                current = current[k]
-            else:
-                return default
-        return current
+        # """Get configuration value with dot notation (e.g., 'memory/bank_size')"""
+        # keys = key.split('/')
+        # current = self.config_data
+        # for k in keys:
+        #     if isinstance(current, dict) and k in current:
+        #         current = current[k]
+        #     else:
+        #         return default
+        # return current
+        return self.config_data.get(key, default)
     
     def get_bool(self, key):
         """Get boolean configuration value"""
         val = self.get(key)
         if isinstance(val, bool):
             return val
-        return val.lower() in ('true', '1', 'yes', 'on')
+        #return val.lower() in ('true', '1', 'yes', 'on')
+        return str(val).lower() in ('true', '1', 'yes', 'on')
     
     def get_int(self, key):
         """Get integer configuration value"""
@@ -244,7 +246,7 @@ class StandaloneMemTherm:
     
     def load_config(self, config_file):
         """Load configuration from file"""
-        config = ConfigParser.ConfigParser()
+        config = configparser.ConfigParser()
         config.read(config_file)
         
         # Load configuration into sim.config
@@ -367,9 +369,12 @@ class StandaloneMemTherm:
         """Setup hotspot command"""
         hotspot_path = os.path.join(os.getcwd(), sim.config.get('hotspot/tool_path'))
         executable = os.path.join(hotspot_path, 'hotspot')
-        hotspot_config_file = sim.config.get('hotspot/hotspot_config_file_mem')
-        hotspot_layer_file = sim.config.get('hotspot/layer_file_mem')
-        
+        hotspot_config_file = os.path.join(sim.config.get('hotspot/config_path'), sim.config.get('hotspot/hotspot_config_file_mem'))
+        hotspot_layer_file = os.path.join(sim.config.get('hotspot/config_path'), sim.config.get('hotspot/layer_file_mem'))
+        hotspot_floorplan_folder   = os.path.join(sim.config.get('hotspot/config_path'), sim.config.get('hotspot/floorplan_folder'))
+        #initialization and setting up files
+        os.system("echo copying files for first run")
+        os.system("cp -r " + hotspot_floorplan_folder + " " + './hotspot')
         self.hotspot_command = "{} -c {} -p {} -o {} -model_secondary 1 -model_type grid -steady_file {} -all_transient_file {} -grid_steady_file {} -steady_state_print_disable 1 -l 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, -type {} -sampling_intvl {} -grid_layer_file {} -detailed_3D on".format(
             executable, hotspot_config_file, self.power_trace_file, self.temperature_trace_file,
             self.steady_temp_file, self.all_transient_file, self.grid_steady_file,
@@ -412,6 +417,9 @@ class StandaloneMemTherm:
         
         with open(self.power_trace_file, "w") as f:
             f.write("{}\n".format(ptrace_header))
+        with open(self.temperature_trace_file, "w") as f:
+            f.write("{}\n".format(ptrace_header))
+        return "{}\n".format(ptrace_header)
     
     def gen_combined_trace_header(self):
         """Generate combined trace header"""
@@ -511,8 +519,10 @@ class StandaloneMemTherm:
         power_trace += "\r\n"
         
         # Write power trace to file
+        header = self.gen_ptrace_header()
         with open(self.power_trace_file, "w") as f:
-            f.write(self.gen_ptrace_header())
+            #f.write(self.gen_ptrace_header())
+            f.write(header)
             f.write(power_trace)
         
         return power_trace

@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 """
 example_usage.py
 
@@ -8,6 +8,7 @@ with custom bank access patterns.
 
 import os
 import sys
+print(sys.executable)
 import numpy as np
 from standalone_thermal import StandaloneMemTherm, BankAccessProvider
 
@@ -203,7 +204,7 @@ def analyze_results():
     
     for filename in output_files:
         if os.path.exists(filename):
-            print("✓ Found output file: {}".format(filename))
+            print("Found output file: {}".format(filename))
             
             # Read and display first few lines
             try:
@@ -215,7 +216,7 @@ def analyze_results():
             except Exception as e:
                 print("  Error reading file: {}".format(e))
         else:
-            print("✗ Missing output file: {}".format(filename))
+            print("Missing output file: {}".format(filename))
     
     print("\nAnalysis complete!")
 
@@ -227,9 +228,9 @@ def main():
     # Check if numpy is available
     try:
         import numpy as np
-        print("✓ NumPy available for advanced access patterns")
+        print("NumPy available for advanced access patterns")
     except ImportError:
-        print("⚠ NumPy not available, using basic access patterns")
+        print("NumPy not available, using basic access patterns")
         # Fallback to basic random without numpy
         import random
         np = None
