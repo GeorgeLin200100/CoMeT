@@ -95,7 +95,7 @@ class MockStatsGetter:
         self.index = index
         self.metric = metric
         self.stats_data = stats_data
-        self.last_value = 0
+        self.last_value = self.stats_data[self.component][self.index][self.metric]
     
     def last(self):
         """Get last value"""
@@ -524,6 +524,7 @@ class StandaloneMemTherm:
             #f.write(self.gen_ptrace_header())
             f.write(header)
             f.write(power_trace)
+        f.close()
         
         return power_trace
     

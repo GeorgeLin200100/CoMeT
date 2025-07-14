@@ -124,7 +124,7 @@ sampling_interval = 1000000
 tool_path = ../hotspot_tool
 config_path = ../
 hotspot_config_file_mem = config/hotspot/3Dmem/mem_hotspot.config
-floorplan_folder = config/hotspot/3Dmem
+floorplan_folder = config/hotspot/test_standalone
 layer_file_mem = config/hotspot/3Dmem/mem.lcf
 
 [hotspot/log_files_mem]
@@ -258,9 +258,9 @@ total_cores = 2
 
 [memory]
 bank_size = 67108864
-energy_per_read_access = 1.0
-energy_per_write_access = 1.0
-logic_core_power = 0.1
+energy_per_read_access = 20.55
+energy_per_write_access = 20.55
+logic_core_power = 0.272
 energy_per_refresh_access = 100.0
 t_refi = 7.8
 no_refesh_commands_in_t_refw = 8
@@ -277,9 +277,9 @@ type_of_stack = 3Dmem
 sampling_interval = 1000000
 tool_path = ../hotspot_tool
 config_path = ..
-hotspot_config_file_mem = config/hotspot/3Dmem/mem_hotspot.config
-floorplan_folder = config/hotspot/3Dmem
-layer_file_mem = config/hotspot/3Dmem/mem.lcf
+hotspot_config_file_mem = config/hotspot/test_standalone/mem_hotspot.config
+floorplan_folder = config/hotspot/test_standalone
+layer_file_mem = config/hotspot/test_standalone/mem.lcf
 
 [hotspot/log_files_mem]
 power_trace_file = integration_power.trace
@@ -324,6 +324,9 @@ enabled = false
             # Create access provider
             access_provider = BankAccessProvider(4)
             access_provider.set_access_data([10, 15, 20, 25], [5, 8, 12, 15])
+            os.system("echo creating floorplan files for first run")
+            os.system("mkdir -p ../config/hotspot/test_standalone")
+            os.system("python3 ../floorplanlib/create.py --mode 3Dmem --cores 2x1 --corex 3.414mm --corey 6.828mm --banks 2x2x1 --bankx 3.414mm --banky 3.414mm --out ../config/hotspot/test_standalone")
             
             # Create thermal simulation
             thermal_sim = StandaloneMemTherm('integration_config.cfg', access_provider)
