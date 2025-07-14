@@ -519,10 +519,10 @@ class StandaloneMemTherm:
         power_trace += "\r\n"
         
         # Write power trace to file
-        header = self.gen_ptrace_header()
-        with open(self.power_trace_file, "w") as f:
-            #f.write(self.gen_ptrace_header())
-            f.write(header)
+        if not os.path.exists(self.power_trace_file):
+            with open(self.power_trace_file, "w") as f:
+                f.write(self.gen_ptrace_header())
+        with open(self.power_trace_file, "a") as f:
             f.write(power_trace)
         f.close()
         
@@ -575,6 +575,11 @@ class StandaloneMemTherm:
         
         # Calculate power trace
         self.calc_power_trace()
+
+        if (os.path.exists('integration_power.trace')):
+            with open('integration_power.trace', 'r') as f:
+                for i, line in enumerate(f):
+                    print(f"line {i+1}: {line.strip()}")
         
         # Execute hotspot
         self.execute_hotspot()

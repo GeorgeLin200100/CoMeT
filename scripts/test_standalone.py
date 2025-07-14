@@ -254,14 +254,14 @@ class TestIntegration(unittest.TestCase):
         """Test complete simulation flow"""
         # Create minimal config
         config_content = """[general]
-total_cores = 2
+total_cores = 4
 
 [memory]
 bank_size = 67108864
 energy_per_read_access = 20.55
 energy_per_write_access = 20.55
 logic_core_power = 0.272
-energy_per_refresh_access = 100.0
+energy_per_refresh_access = 3.55
 t_refi = 7.8
 no_refesh_commands_in_t_refw = 8
 banks_in_x = 2
@@ -269,7 +269,7 @@ banks_in_y = 2
 banks_in_z = 1
 num_banks = 4
 cores_in_x = 2
-cores_in_y = 1
+cores_in_y = 2
 cores_in_z = 1
 type_of_stack = 3Dmem
 
@@ -326,12 +326,16 @@ enabled = false
             access_provider.set_access_data([10, 15, 20, 25], [5, 8, 12, 15])
             os.system("echo creating floorplan files for first run")
             os.system("mkdir -p ../config/hotspot/test_standalone")
-            os.system("python3 ../floorplanlib/create.py --mode 3Dmem --cores 2x1 --corex 3.414mm --corey 6.828mm --banks 2x2x1 --bankx 3.414mm --banky 3.414mm --out ../config/hotspot/test_standalone")
+            os.system("python3 ../floorplanlib/create.py --mode 3Dmem --cores 2x2 --corex 3.414mm --corey 3.414mm --banks 2x2x1 --bankx 3.414mm --banky 3.414mm --out ../config/hotspot/test_standalone")
             
             # Create thermal simulation
             thermal_sim = StandaloneMemTherm('integration_config.cfg', access_provider)
             
             # Run a single step
+            thermal_sim.step(1000000)  # 1ms step
+
+            thermal_sim.step(1000000)  # 1ms step
+
             thermal_sim.step(1000000)  # 1ms step
             
             # Verify files were created
@@ -350,9 +354,9 @@ enabled = false
                 'bank_mode.trace'
             ]
             
-            for filename in test_files:
-                if os.path.exists(filename):
-                    os.remove(filename)
+            # for filename in test_files:
+            #     if os.path.exists(filename):
+            #         os.remove(filename)
 
 def run_tests():
     """Run all tests"""
