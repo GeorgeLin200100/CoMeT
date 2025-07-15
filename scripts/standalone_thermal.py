@@ -414,11 +414,13 @@ class StandaloneMemTherm:
                     for y in range(self.cores_in_y):
                         core_number = z * self.cores_in_x * self.cores_in_y + x * self.cores_in_y + y
                         ptrace_header += "C_{}\t".format(core_number)
-        
+        ptrace_header = ptrace_header.rstrip('\t')
         with open(self.power_trace_file, "w") as f:
             f.write("{}\n".format(ptrace_header))
+        f.close()
         with open(self.temperature_trace_file, "w") as f:
             f.write("{}\n".format(ptrace_header))
+        f.close()
         return "{}\n".format(ptrace_header)
     
     def gen_combined_trace_header(self):
@@ -429,10 +431,13 @@ class StandaloneMemTherm:
         for x in range(self.NUM_BANKS):
             trace_header += "B_{}\t".format(x)
         
+        #trace_header = trace_header.rstrip('\t')
         with open(self.combined_temperature_trace_file, "w") as f:
             f.write("{}\n".format(trace_header))
+        f.close()
         with open(self.combined_power_trace_file, "w") as f:
             f.write("{}\n".format(trace_header))
+        f.close()
     
     def get_access_rates(self):
         """Get access rates from the access provider"""
@@ -517,14 +522,21 @@ class StandaloneMemTherm:
             power_trace += core_power_data
         
         power_trace += "\n"
+        #power_trace = power_trace.rstrip('\t\r\n')
         
         # Write power trace to file
         # if not os.path.exists(self.power_trace_file):
         #     with open(self.power_trace_file, "w") as f:
         #         f.write(self.gen_ptrace_header())
         with open(self.power_trace_file, "a") as f:
-            f.write("%s\n" %(power_trace))
+            #f.write("%s\n" %(power_trace))
+            print("Write power_trace:{}".format(power_trace))
+            f.write(power_trace)
         f.close()
+        # ptrace_header = self.gen_ptrace_header()
+        # with open(self.power_trace_file,"w") as f:
+        #     f.write(ptrace_header)
+        #     f.write("%s\n" % power_trace)
         
         return power_trace
     
@@ -545,6 +557,7 @@ class StandaloneMemTherm:
         with open("bank_mode.trace", "w") as f:
             f.write("{}\n".format(bank_mode_header))
             f.write(bank_mode_trace_string)
+        f.close()
     
     def execute_hotspot(self):
         """Execute hotspot thermal simulation"""
@@ -579,8 +592,9 @@ class StandaloneMemTherm:
         if (os.path.exists('integration_power.trace')):
             with open('integration_power.trace', 'r') as f:
                 for i, line in enumerate(f):
-                    print(f"line {i+1}: {line.strip()}")
-        
+                    #print(f"line {i+1}: {line.strip()}")
+                    print(f"line {i+1}: {line}")
+            f.close()
         # Execute hotspot
         self.execute_hotspot()
         
@@ -707,6 +721,7 @@ enabled = false
     
     with open('sample_config.cfg', 'w') as f:
         f.write(config_content)
+    f.close()
     
     print("Sample configuration file created: sample_config.cfg")
 

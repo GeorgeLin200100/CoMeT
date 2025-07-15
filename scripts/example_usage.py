@@ -98,10 +98,10 @@ total_cores = 16
 
 [memory]
 bank_size = 67108864
-energy_per_read_access = 1.0
-energy_per_write_access = 1.0
-logic_core_power = 0.1
-energy_per_refresh_access = 100.0
+energy_per_read_access = 20.55
+energy_per_write_access = 20.55
+logic_core_power = 0.272
+energy_per_refresh_access = 3.55
 t_refi = 7.8
 no_refesh_commands_in_t_refw = 8
 banks_in_x = 4
@@ -111,15 +111,15 @@ num_banks = 128
 cores_in_x = 4
 cores_in_y = 4
 cores_in_z = 1
-type_of_stack = 3D
+type_of_stack = 3Dmem
 
 [hotspot]
 sampling_interval = 1000000
-tool_path = hotspot_tool
-config_path = .
-hotspot_config_file_mem = hotspot.config
-floorplan_folder = hotspot/floorplans
-layer_file_mem = hotspot/layers.config
+tool_path = ../hotspot_tool
+config_path = ..
+hotspot_config_file_mem = config/hotspot/test_standalone1/mem_hotspot.config
+floorplan_folder = config/hotspot/test_standalone1
+layer_file_mem = config/hotspot/test_standalone1/mem.lcf
 
 [hotspot/log_files_mem]
 power_trace_file = power.trace
@@ -235,6 +235,9 @@ def main():
         import random
         np = None
     
+    os.system("echo creating floorplan files for first run")
+    os.system("mkdir -p ../config/hotspot/test_standalone1")
+    os.system("python3 ../floorplanlib/create.py --mode 3Dmem --cores 4x4 --corex 3.414mm --corey 3.414mm --banks 4x4x8 --bankx 3.414mm --banky 3.414mm --out ../config/hotspot/test_standalone1")
     # Run example simulation
     run_example_simulation()
     
