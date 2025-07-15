@@ -243,6 +243,7 @@ class StandaloneMemTherm:
         print("Number of banks: {}".format(self.NUM_BANKS))
         print("Number of cores: {}".format(self.NUM_CORES))
         print("Sampling interval: {} ns".format(self.sampling_interval))
+        self.header_written = False  # Track if header is written
     
     def load_config(self, config_file):
         """Load configuration from file"""
@@ -351,7 +352,7 @@ class StandaloneMemTherm:
         os.system('mkdir -p hotspot')
         os.system('mkdir -p output')
         
-        # Setup file paths
+        # Setup file paths first
         self.power_trace_file = sim.config.get('hotspot/log_files_mem/power_trace_file')
         self.temperature_trace_file = sim.config.get('hotspot/log_files_mem/temperature_trace_file')
         self.init_file = sim.config.get('hotspot/log_files_mem/init_file')
@@ -361,8 +362,13 @@ class StandaloneMemTherm:
         self.combined_temperature_trace_file = sim.config.get('hotspot/log_files/combined_temperature_trace_file')
         self.combined_power_trace_file = sim.config.get('hotspot/log_files/combined_power_trace_file')
         
+        # Clean up power trace file at the start of each simulation
+        if os.path.exists(self.power_trace_file):
+            os.remove(self.power_trace_file)
+        self.header_written = False
+        
         # Initialize files
-        self.gen_ptrace_header()
+        # Do not write header here, do it in write_power_trace
         self.gen_combined_trace_header()
     
     def setup_hotspot_command(self):
@@ -414,14 +420,9 @@ class StandaloneMemTherm:
                     for y in range(self.cores_in_y):
                         core_number = z * self.cores_in_x * self.cores_in_y + x * self.cores_in_y + y
                         ptrace_header += "C_{}\t".format(core_number)
+        
         ptrace_header = ptrace_header.rstrip('\t')
-        with open(self.power_trace_file, "w") as f:
-            f.write("{}\n".format(ptrace_header))
-        f.close()
-        with open(self.temperature_trace_file, "w") as f:
-            f.write("{}\n".format(ptrace_header))
-        f.close()
-        return "{}\n".format(ptrace_header)
+        return ptrace_header
     
     def gen_combined_trace_header(self):
         """Generate combined trace header"""
@@ -485,60 +486,46 @@ class StandaloneMemTherm:
                                         (self.timestep * 1000) + self.bank_static_power + avg_refresh_power)
             bank_power_trace[bank] = round(bank_power_trace[bank], 3)
         
-        # Generate power trace string
-        power_trace = ''
-        
+        # Build the power trace line as a list of values (no trailing tab)
+        power_values = []
         # Add core power for 2.5D
         if self.type_of_stack == "2.5D":
             # Mock core power data
-            core_power_data = '\t'.join(['0.1'] * self.NUM_CORES) + '\t'
-            power_trace += core_power_data
-        
+            power_values.extend(['0.1'] * self.NUM_CORES)
         # Add logic core power
         if self.type_of_stack in ["2.5D", "3Dmem"]:
-            logic_power_trace = [self.logic_core_power] * self.NUM_LC
-            for p in logic_power_trace:
-                power_trace += str(p) + '\t'
-        
+            power_values.extend([str(self.logic_core_power)] * self.NUM_LC)
         # Add X1, X2, X3 for 2.5D
         if self.type_of_stack == "2.5D":
-            for x in range(1, 4):
-                power_trace += "0.00\t"
-        
+            power_values.extend(["0.00"] * 3)
         # Add bank power
         for bank in range(len(bank_power_trace)):
             if self.type_of_stack == "2.5D" and bank % (self.banks_in_x * self.banks_in_y) == 0 and bank > 0:
-                power_trace += "0.00\t0.00\t0.00\t"
-            power_trace += str(bank_power_trace[bank]) + '\t'
-        
+                power_values.extend(["0.00"] * 3)
+            power_values.append(str(bank_power_trace[bank]))
         # Add X1, X2, X3 for 2.5D at the end
         if self.type_of_stack == "2.5D":
-            for x in range(1, 4):
-                power_trace += "0.00\t"
-        
+            power_values.extend(["0.00"] * 3)
         # Add core power for 3D
         if self.type_of_stack == "3D":
-            core_power_data = '\t'.join(['0.1'] * self.NUM_CORES)
-            power_trace += core_power_data
-        
-        power_trace += "\n"
-        #power_trace = power_trace.rstrip('\t\r\n')
-        
-        # Write power trace to file
-        # if not os.path.exists(self.power_trace_file):
-        #     with open(self.power_trace_file, "w") as f:
-        #         f.write(self.gen_ptrace_header())
-        with open(self.power_trace_file, "a") as f:
-            #f.write("%s\n" %(power_trace))
-            print("Write power_trace:{}".format(power_trace))
-            f.write(power_trace)
-        f.close()
-        # ptrace_header = self.gen_ptrace_header()
-        # with open(self.power_trace_file,"w") as f:
-        #     f.write(ptrace_header)
-        #     f.write("%s\n" % power_trace)
-        
+            power_values.extend(['0.1'] * self.NUM_CORES)
+        power_trace = '\t'.join(power_values) + '\n'
         return power_trace
+    
+    def write_power_trace(self, power_trace):
+        """Write power trace following the golden reference approach"""
+        if not self.header_written:
+            # Write header twice due to Hotspot double-read bug
+            header = self.gen_ptrace_header()
+            with open(self.power_trace_file, "w") as f:
+                f.write("{}\n".format(header))
+                f.write("{}\n".format(header))  # duplicate header
+                f.write(power_trace)
+            self.header_written = True
+        else:
+            # Append only data for subsequent steps
+            with open(self.power_trace_file, "a") as f:
+                f.write(power_trace)
     
     def write_bank_leakage_trace(self):
         """Write bank leakage trace"""
@@ -586,8 +573,9 @@ class StandaloneMemTherm:
         # Write bank leakage trace
         self.write_bank_leakage_trace()
         
-        # Calculate power trace
-        self.calc_power_trace()
+        # Calculate power trace and write it robustly
+        power_trace = self.calc_power_trace()
+        self.write_power_trace(power_trace)
 
         if (os.path.exists('integration_power.trace')):
             with open('integration_power.trace', 'r') as f:

@@ -648,6 +648,7 @@ for (i = 0; i < length_v; ++i)
   vals = dvector(MAX_UNITS);
   vals_withLeak = dvector(MAX_UNITS);
   while ((num=read_vals(pin, vals)) != 0) {
+      printf("n = %d\n", n);
       if(num != n)
         fatal("invalid trace file format\n");
 
