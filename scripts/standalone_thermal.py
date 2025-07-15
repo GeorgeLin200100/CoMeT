@@ -591,6 +591,10 @@ class StandaloneMemTherm:
         """Execute one simulation step"""
         print("Simulation step at time {} ns (delta: {} ns)".format(self.current_time, time_delta_ns))
         
+        # Update access pattern if provider supports it
+        if hasattr(self.access_provider, 'update_pattern'):
+            self.access_provider.update_pattern()
+        
         # Update simulation time
         sim.stats.current_time = self.current_time
         

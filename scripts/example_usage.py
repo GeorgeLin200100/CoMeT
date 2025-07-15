@@ -9,9 +9,11 @@ with custom bank access patterns.
 import os
 import sys
 import shutil
+import math
 print(sys.executable)
 import numpy as np
 from standalone_thermal import StandaloneMemTherm, BankAccessProvider
+import random
 
 class CustomAccessProvider(BankAccessProvider):
     """Custom access provider that generates realistic access patterns"""
@@ -92,6 +94,87 @@ class CustomAccessProvider(BankAccessProvider):
                 self.generate_hotspot_pattern()
         # Uniform pattern stays the same
 
+class FileAccessProvider(BankAccessProvider):
+    """Access provider that reads ms-accurate access data from a file"""
+    
+    def __init__(self, num_banks, access_file):
+        super().__init__(num_banks)
+        self.access_file = access_file
+        self.current_step = 0
+        self.access_data = self.load_access_data()
+        
+    def load_access_data(self):
+        """Load access data from file"""
+        access_data = []
+        
+        try:
+            with open(self.access_file, 'r') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    
+                    # Expected format: step,read_0,read_1,...,read_127,write_0,write_1,...,write_127
+                    # Or: step,read_0,read_1,...,read_127,write_0,write_1,...,write_127,low_read_0,...,low_write_127
+                    parts = line.split(',')
+                    
+                    if len(parts) < 2 + 2 * self.num_banks:  # step + reads + writes
+                        print(f"Warning: Line {line_num} has insufficient data: {line}")
+                        continue
+                    
+                    step = int(parts[0])
+                    read_accesses = [int(x) for x in parts[1:1+self.num_banks]]
+                    write_accesses = [int(x) for x in parts[1+self.num_banks:1+2*self.num_banks]]
+                    
+                    # Optional low power data
+                    low_read_accesses = None
+                    low_write_accesses = None
+                    bank_modes = None
+                    
+                    if len(parts) >= 1 + 4 * self.num_banks:  # Has low power data
+                        low_read_accesses = [int(x) for x in parts[1+2*self.num_banks:1+3*self.num_banks]]
+                        low_write_accesses = [int(x) for x in parts[1+3*self.num_banks:1+4*self.num_banks]]
+                    
+                    if len(parts) >= 1 + 5 * self.num_banks:  # Has bank modes
+                        bank_modes = [int(x) for x in parts[1+4*self.num_banks:1+5*self.num_banks]]
+                    
+                    access_data.append({
+                        'step': step,
+                        'read_accesses': read_accesses,
+                        'write_accesses': write_accesses,
+                        'low_read_accesses': low_read_accesses,
+                        'low_write_accesses': low_write_accesses,
+                        'bank_modes': bank_modes
+                    })
+            
+            print(f"Loaded {len(access_data)} access steps from {self.access_file}")
+            return access_data
+            
+        except FileNotFoundError:
+            print(f"Error: Access file '{self.access_file}' not found")
+            return []
+        except Exception as e:
+            print(f"Error loading access file: {e}")
+            return []
+    
+    def update_pattern(self):
+        """Update access pattern for next time step"""
+        if self.current_step < len(self.access_data):
+            data = self.access_data[self.current_step]
+            self.set_access_data(
+                data['read_accesses'],
+                data['write_accesses'],
+                data['low_read_accesses'],
+                data['low_write_accesses'],
+                data['bank_modes']
+            )
+            self.current_step += 1
+        else:
+            # End of file - keep last pattern or set to zero
+            print(f"Warning: Reached end of access file at step {self.current_step}")
+            # Optionally set to zero accesses
+            # self.set_access_data([0] * self.num_banks, [0] * self.num_banks)
+
 def create_sample_config():
     """Create a sample configuration file for testing"""
     config_content = """[general]
@@ -163,6 +246,57 @@ enabled = false
     
     print("Created example configuration file: example_config.cfg")
 
+def create_sample_access_file():
+    """Create a sample access file for testing"""
+    
+    filename = 'sample_access.csv'
+    num_banks = 128
+    num_steps = 10  # 10ms simulation
+    
+    with open(filename, 'w') as f:
+        f.write("# Sample access file format: step,read_0,read_1,...,read_127,write_0,write_1,...,write_127\n")
+        f.write("# Optional: add low_read_0,...,low_write_127,bank_mode_0,...,bank_mode_127\n")
+        
+        for step in range(num_steps):
+            # Generate realistic access patterns
+            read_accesses = []
+            write_accesses = []
+            low_read_accesses = []
+            low_write_accesses = []
+            bank_modes = []
+            
+            for bank in range(num_banks):
+                # Base access rate
+                base_read = random.randint(5, 25)
+                base_write = random.randint(2, 12)
+                
+                # Add some hotspots
+                if step < 3 and bank in [60, 61, 62, 63, 68, 69, 70, 71]:
+                    base_read = random.randint(3000, 5000)
+                    base_write = random.randint(1500, 2500)
+                
+                # Add some variation over time
+                time_factor = 1.0 + 0.2 * math.sin(step * 0.5)
+                read_count = int(base_read * time_factor)
+                write_count = int(base_write * time_factor)
+                
+                read_accesses.append(read_count)
+                write_accesses.append(write_count)
+                
+                # Low power accesses (20% of normal)
+                low_read_accesses.append(int(read_count * 0.2))
+                low_write_accesses.append(int(write_count * 0.2))
+                
+                # Bank modes (1 = normal, 0 = low power)
+                bank_modes.append(1 if random.random() > 0.1 else 0)
+            
+            # Write line: step,reads,writes,low_reads,low_writes,bank_modes
+            line_parts = [str(step)] + read_accesses + write_accesses + low_read_accesses + low_write_accesses + bank_modes
+            f.write(','.join(map(str, line_parts)) + '\n')
+    
+    print(f"Created sample access file: {filename}")
+    return filename
+
 def run_example_simulation():
     """Run example thermal simulation with different access patterns"""
     
@@ -202,6 +336,35 @@ def run_example_simulation():
         print("Completed simulation with {} pattern".format(pattern))
     
     print("\nAll example simulations completed!")
+
+def run_file_based_simulation():
+    """Run simulation with file-based access data"""
+    print("\n" + "="*50)
+    print("Running simulation with file-based access pattern")
+    print("="*50)
+    
+    # Create sample access file
+    access_file = create_sample_access_file()
+    
+    # Create access provider with file input
+    access_provider = FileAccessProvider(128, access_file)
+    
+    # Create thermal simulation
+    thermal_sim = StandaloneMemTherm('example_config.cfg', access_provider)
+    
+    # Run simulation for 10ms (10 steps)
+    thermal_sim.run(10000000)
+    
+    print("Completed simulation with file-based pattern")
+    
+    # Move output to dedicated directory
+    dst_dir = 'output_file_based'
+    if os.path.exists(dst_dir):
+        shutil.rmtree(dst_dir)
+    if os.path.exists("output"):
+        shutil.move("output", dst_dir)
+    else:
+        print("Warning: 'output' directory does not exist, nothing to move.")
 
 def analyze_results():
     """Analyze the results of the thermal simulation"""
@@ -248,14 +411,17 @@ def main():
     except ImportError:
         print("NumPy not available, using basic access patterns")
         # Fallback to basic random without numpy
-        import random
         np = None
     
     os.system("echo creating floorplan files for first run")
     os.system("mkdir -p ../config/hotspot/test_standalone1")
     os.system("python3 ../floorplanlib/create.py --mode 3Dmem --cores 4x4 --corex 3.414mm --corey 3.414mm --banks 4x4x8 --bankx 3.414mm --banky 3.414mm --out ../config/hotspot/test_standalone1")
-    # Run example simulation
+    
+    # Run example simulation with built-in patterns
     run_example_simulation()
+    
+    # Run file-based simulation
+    run_file_based_simulation()
     
     # Analyze results
     analyze_results()
