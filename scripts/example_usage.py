@@ -8,6 +8,7 @@ with custom bank access patterns.
 
 import os
 import sys
+import shutil
 print(sys.executable)
 import numpy as np
 from standalone_thermal import StandaloneMemTherm, BankAccessProvider
@@ -56,8 +57,8 @@ class CustomAccessProvider(BankAccessProvider):
         # Increase access rate for hotspot banks
         for bank in center_banks:
             if bank < self.num_banks:
-                self.read_accesses[bank] = 40
-                self.write_accesses[bank] = 20
+                self.read_accesses[bank] = 40000
+                self.write_accesses[bank] = 20000
         
         # All banks in normal power mode
         self.bank_modes = [1] * self.num_banks
@@ -97,7 +98,7 @@ def create_sample_config():
 total_cores = 16
 
 [memory]
-bank_size = 67108864
+bank_size = 64
 energy_per_read_access = 20.55
 energy_per_write_access = 20.55
 logic_core_power = 0.272
@@ -184,6 +185,19 @@ def run_example_simulation():
         
         # Run simulation for 5ms
         thermal_sim.run(5000000)
+
+        # Define source and destination directories
+        dst_dir = f'output_{pattern}'
+
+        # Remove destination if it already exists to avoid errors
+        if os.path.exists(dst_dir):
+            shutil.rmtree(dst_dir)
+
+        # Move the output directory to the new destination
+        if os.path.exists("output"):
+            shutil.move("output", dst_dir)
+        else:
+            print(f"Warning: 'output' directory does not exist, nothing to move.")
         
         print("Completed simulation with {} pattern".format(pattern))
     
@@ -193,7 +207,8 @@ def analyze_results():
     """Analyze the results of the thermal simulation"""
     print("\nAnalyzing simulation results...")
     
-    # Check if output files exist
+    # Check if output files exist in output directory
+    output_dir = 'output'
     output_files = [
         'power.trace',
         'temperature.trace',
@@ -203,12 +218,13 @@ def analyze_results():
     ]
     
     for filename in output_files:
-        if os.path.exists(filename):
-            print("Found output file: {}".format(filename))
+        filepath = os.path.join(output_dir, filename)
+        if os.path.exists(filepath):
+            print("Found output file: {}".format(filepath))
             
             # Read and display first few lines
             try:
-                with open(filename, 'r') as f:
+                with open(filepath, 'r') as f:
                     lines = f.readlines()
                     print("  First 3 lines:")
                     for i, line in enumerate(lines[:3]):
@@ -216,7 +232,7 @@ def analyze_results():
             except Exception as e:
                 print("  Error reading file: {}".format(e))
         else:
-            print("Missing output file: {}".format(filename))
+            print("Missing output file: {}".format(filepath))
     
     print("\nAnalysis complete!")
 

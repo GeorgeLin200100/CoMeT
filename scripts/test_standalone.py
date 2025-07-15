@@ -21,11 +21,11 @@ class TestMockFramework(unittest.TestCase):
     def test_mock_config(self):
         """Test MockConfig functionality"""
         # Test setting and getting config values
-        self.config.config_data['memory/bank_size'] = '67108864'
+        self.config.config_data['memory/bank_size'] = '64'
         self.config.config_data['memory/energy_per_read_access'] = '1.0'
         
-        self.assertEqual(self.config.get('memory/bank_size'), '67108864')
-        self.assertEqual(self.config.get_int('memory/bank_size'), 67108864)
+        self.assertEqual(self.config.get('memory/bank_size'), '64')
+        self.assertEqual(self.config.get_int('memory/bank_size'), 64)
         self.assertEqual(self.config.get_float('memory/energy_per_read_access'), 1.0)
         
         # Test default values
@@ -257,7 +257,7 @@ class TestIntegration(unittest.TestCase):
 total_cores = 4
 
 [memory]
-bank_size = 67108864
+bank_size = 64
 energy_per_read_access = 20.55
 energy_per_write_access = 20.55
 logic_core_power = 0.272

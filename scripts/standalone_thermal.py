@@ -258,7 +258,7 @@ class StandaloneMemTherm:
         
         # Set default values for required parameters
         defaults = {
-            'memory/bank_size': 67108864,  # 64MB
+            'memory/bank_size': 64,  # 64MB
             'memory/energy_per_read_access': 1.0,
             'memory/energy_per_write_access': 1.0,
             'memory/logic_core_power': 0.1,
@@ -350,17 +350,29 @@ class StandaloneMemTherm:
     def setup_files(self):
         """Setup output files and directories"""
         os.system('mkdir -p hotspot')
-        os.system('mkdir -p output')
+        output_dir = 'output'
+        if os.path.exists(output_dir):
+            # Remove all files in the output directory
+            for filename in os.listdir(output_dir):
+                file_path = os.path.join(output_dir, filename)
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.remove(file_path)
+                elif os.path.isdir(file_path):
+                    # Optionally, remove subdirectories as well
+                    import shutil
+                    shutil.rmtree(file_path)
+        else:
+            os.makedirs(output_dir)
         
-        # Setup file paths first
-        self.power_trace_file = sim.config.get('hotspot/log_files_mem/power_trace_file')
-        self.temperature_trace_file = sim.config.get('hotspot/log_files_mem/temperature_trace_file')
-        self.init_file = sim.config.get('hotspot/log_files_mem/init_file')
-        self.steady_temp_file = sim.config.get('hotspot/log_files_mem/steady_temp_file')
-        self.all_transient_file = sim.config.get('hotspot/log_files_mem/all_transient_file')
-        self.grid_steady_file = sim.config.get('hotspot/log_files_mem/grid_steady_file')
-        self.combined_temperature_trace_file = sim.config.get('hotspot/log_files/combined_temperature_trace_file')
-        self.combined_power_trace_file = sim.config.get('hotspot/log_files/combined_power_trace_file')
+        # Setup file paths with output directory prefix
+        self.power_trace_file = os.path.join(output_dir, sim.config.get('hotspot/log_files_mem/power_trace_file'))
+        self.temperature_trace_file = os.path.join(output_dir, sim.config.get('hotspot/log_files_mem/temperature_trace_file'))
+        self.init_file = os.path.join(output_dir, sim.config.get('hotspot/log_files_mem/init_file'))
+        self.steady_temp_file = os.path.join(output_dir, sim.config.get('hotspot/log_files_mem/steady_temp_file'))
+        self.all_transient_file = os.path.join(output_dir, sim.config.get('hotspot/log_files_mem/all_transient_file'))
+        self.grid_steady_file = os.path.join(output_dir, sim.config.get('hotspot/log_files_mem/grid_steady_file'))
+        self.combined_temperature_trace_file = os.path.join(output_dir, sim.config.get('hotspot/log_files/combined_temperature_trace_file'))
+        self.combined_power_trace_file = os.path.join(output_dir, sim.config.get('hotspot/log_files/combined_power_trace_file'))
         
         # Clean up power trace file at the start of each simulation
         if os.path.exists(self.power_trace_file):
@@ -484,6 +496,17 @@ class StandaloneMemTherm:
                 bank_power_trace[bank] = ((accesses_read[bank] * self.energy_per_read_access + 
                                          accesses_write[bank] * self.energy_per_write_access) / 
                                         (self.timestep * 1000) + self.bank_static_power + avg_refresh_power)
+            # Print each element's value in the above one line
+            # print(
+            #     accesses_read[bank],
+            #     self.energy_per_read_access,
+            #     accesses_write[bank],
+            #     self.energy_per_write_access,
+            #     self.timestep,
+            #     self.bank_static_power,
+            #     avg_refresh_power,
+            #     bank_power_trace[bank]
+            # )
             bank_power_trace[bank] = round(bank_power_trace[bank], 3)
         
         # Build the power trace line as a list of values (no trailing tab)
@@ -519,7 +542,7 @@ class StandaloneMemTherm:
             header = self.gen_ptrace_header()
             with open(self.power_trace_file, "w") as f:
                 f.write("{}\n".format(header))
-                f.write("{}\n".format(header))  # duplicate header
+                #f.write("{}\n".format(header))  # duplicate header
                 f.write(power_trace)
             self.header_written = True
         else:
@@ -539,9 +562,10 @@ class StandaloneMemTherm:
             bank_mode_trace_string += "{:.2f}\t".format(leakage)
         bank_mode_trace_string += "\r\n"
         
-        # Write bank mode information
+        # Write bank mode information to output directory
         bank_mode_header = '\t'.join(["B_{}".format(i) for i in range(self.NUM_BANKS)])
-        with open("bank_mode.trace", "w") as f:
+        bank_mode_file = os.path.join('output', 'bank_mode.trace')
+        with open(bank_mode_file, "w") as f:
             f.write("{}\n".format(bank_mode_header))
             f.write(bank_mode_trace_string)
         f.close()
@@ -577,8 +601,9 @@ class StandaloneMemTherm:
         power_trace = self.calc_power_trace()
         self.write_power_trace(power_trace)
 
-        if (os.path.exists('integration_power.trace')):
-            with open('integration_power.trace', 'r') as f:
+        integration_power_file = os.path.join('output', 'integration_power.trace')
+        if (os.path.exists(integration_power_file)):
+            with open(integration_power_file, 'r') as f:
                 for i, line in enumerate(f):
                     #print(f"line {i+1}: {line.strip()}")
                     print(f"line {i+1}: {line}")
