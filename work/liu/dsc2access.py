@@ -50,6 +50,10 @@ each access takes {lanewidth} bytes, so for each ms, the access amount is {lanew
 for input file, within the step, all operations executed in parallel, only when all operations in the step are finished, then move to the next step
 for output file, each step represents a ms, each column represents a bank
 
+CONCURRENT ACCESS BEHAVIOR:
+When the total access time for an operation within a bank group is ≤1ms, all banks in that bank group can be accessed concurrently.
+When the total access time exceeds 1ms, banks are accessed sequentially as before.
+
 '''
 
 
@@ -60,25 +64,94 @@ def parse_arguments():
     parser.add_argument('output_file', help='Output bank-level access pattern file')
     parser.add_argument('--total-banks', type=int, required=True, help='Total number of banks')
     parser.add_argument('--bank-size', type=float, required=True, help='Bank size in MB')
-    parser.add_argument('--bank-groups', type=int, required=True, help='Total number of bank groups')
     parser.add_argument('--stack-height', type=int, required=True, help='Stack height')
     parser.add_argument('--clock-freq', type=float, required=True, help='Clock frequency in MHz')
-    
+    parser.add_argument('--bank-per-row', type=int, help='Number of banks per row (auto-inferred if not specified)')
+    parser.add_argument('--bank-per-col', type=int, help='Number of banks per column (auto-inferred if not specified)')
+    parser.add_argument('--group-rows', type=int, help='Number of rows per group (auto-inferred if not specified)')
+    parser.add_argument('--group-cols', type=int, help='Number of columns per group (auto-inferred if not specified)')
+    parser.add_argument('--num-groups', type=int, help='Number of bank groups (auto-inferred if not specified)')
     return parser.parse_args()
 
 
-def get_bank_group_mapping(total_banks, bank_groups, stack_height):
-    """Create mapping from bank group to bank indices."""
-    banks_per_group = total_banks // bank_groups
-    bank_mapping = {}
-    
-    for group in range(bank_groups):
-        bank_mapping[group] = []
-        for i in range(banks_per_group):
-            # Calculate bank index based on group and position within group
-            # Banks are distributed across the stack height
-            bank_index = group * banks_per_group + i
-            bank_mapping[group].append(bank_index)
+def get_bank_group_mapping(
+    total_banks,
+    stack_height,
+    banks_per_row=None,
+    banks_per_col=None,
+    group_rows=None,
+    group_cols=None,
+    num_groups=None
+):
+    """
+    Flexible bank group mapping.
+    Parameters:
+        total_banks (int): Total number of banks.
+        stack_height (int): Number of stacks (vertical dimension).
+        banks_per_row (int, optional): Number of banks per row in a stack.
+        banks_per_col (int, optional): Number of rows per stack.
+        group_rows (int, optional): Number of rows per group block (within a stack).
+        group_cols (int, optional): Number of columns per group block (within a stack).
+        num_groups (int, optional): Number of bank groups. If not provided, inferred from shape.
+    Returns:
+        dict: {group_id: [bank indices]}
+    """
+    # Infer stack layout if not provided
+    if banks_per_row is None or banks_per_col is None:
+        banks_per_stack = total_banks // stack_height
+        # Try to infer a square/rectangular layout
+        for possible_row in range(1, int(banks_per_stack ** 0.5) + 1):
+            if banks_per_stack % possible_row == 0:
+                possible_col = banks_per_stack // possible_row
+                # Prefer square-ish
+                if abs(possible_row - possible_col) <= 2:
+                    banks_per_row = possible_col
+                    banks_per_col = possible_row
+        if banks_per_row is None or banks_per_col is None:
+            raise ValueError("Cannot infer stack layout. Please specify banks_per_row and banks_per_col.")
+
+    # Infer group shape if not provided
+    if group_rows is None or group_cols is None:
+        # Default: divide stack into 2x2 blocks if possible
+        group_rows = 2 if banks_per_col % 2 == 0 else 1
+        group_cols = 2 if banks_per_row % 2 == 0 else 1
+
+    # Compute number of groups if not provided
+    groups_per_row = banks_per_row // group_cols
+    groups_per_col = banks_per_col // group_rows
+    inferred_num_groups = groups_per_row * groups_per_col
+    if num_groups is None:
+        num_groups = inferred_num_groups
+    else:
+        if num_groups != inferred_num_groups:
+            raise ValueError(f"num_groups ({num_groups}) does not match inferred ({inferred_num_groups}) from shape.")
+
+    bank_mapping = {g: [] for g in range(num_groups)}
+    banks_per_stack = banks_per_row * banks_per_col
+
+    # For each stack, divide it into group blocks and assign to groups
+    for stack in range(stack_height):
+        stack_start = stack * banks_per_stack
+        
+        # For each group block position within the stack
+        for group_block_row in range(groups_per_col):
+            for group_block_col in range(groups_per_row):
+                # Calculate which group this block belongs to
+                group_id = group_block_row * groups_per_row + group_block_col
+                if group_id >= num_groups:
+                    continue
+                
+                # Add all banks in this block to the group
+                for r in range(group_rows):
+                    for c in range(group_cols):
+                        # Calculate the actual row and column in the stack
+                        actual_row = group_block_row * group_rows + r
+                        actual_col = group_block_col * group_cols + c
+                        
+                        # Calculate the bank index
+                        bank_index = stack_start + actual_row * banks_per_row + actual_col
+                        if bank_index < total_banks:
+                            bank_mapping[group_id].append(bank_index)
     
     return bank_mapping
 
@@ -204,7 +277,8 @@ def process_operations_to_timeline(operations, bank_mapping, bank_size_mb, clock
             'type': access_type.lower(),
             'duration': duration_ms,
             'bank_accesses': bank_accesses,
-            'bank_group': bank_group
+            'bank_group': bank_group,
+            'lanewidth': op_lanewidth
         })
         
         print(f"DEBUG:   operation added to timeline: duration={duration_ms}ms, bank_accesses={bank_accesses}")
@@ -223,49 +297,68 @@ def process_operations_to_timeline(operations, bank_mapping, bank_size_mb, clock
         print(f"DEBUG: processing millisecond {ms}")
         
         for op in operation_timeline:
-            # For sequential access, determine which bank should be active at this millisecond
             banks_in_group = bank_mapping[op['bank_group']]
             total_accesses = sum(op['bank_accesses'].values())
             
             print(f"DEBUG:   operation {op['type']}@{op['bank_group']}: total_accesses={total_accesses}")
             
             if total_accesses > 0:
-                # Calculate which bank should be active at this millisecond
-                # Banks are activated sequentially, so we need to find which one is active now
-                current_access = 0
-                active_bank = None
-                active_accesses = 0
+                # Check if this operation can be completed within 1ms (concurrent access)
+                # Calculate total access time for this operation
+                access_per_ms = calculate_access_amount(op['lanewidth'], clock_freq_mhz)
+                total_access_time_ms = total_accesses / access_per_ms if access_per_ms > 0 else 1
                 
-                for bank in banks_in_group:
-                    bank_access_count = op['bank_accesses'].get(bank, 0)
-                    if bank_access_count > 0:
-                        # Calculate the time period this bank should be active
-                        bank_duration = (bank_access_count / total_accesses) * op['duration']
-                        bank_start_ms = (current_access / total_accesses) * op['duration']
-                        bank_end_ms = bank_start_ms + bank_duration
-                        
-                        print(f"DEBUG:     bank {bank}: access_count={bank_access_count}, duration={bank_duration}ms")
-                        print(f"DEBUG:       active period: {bank_start_ms}ms to {bank_end_ms}ms")
-                        
-                        # Check if this bank should be active at current millisecond
-                        if bank_start_ms <= ms < bank_end_ms:
-                            active_bank = bank
-                            active_accesses = bank_access_count / bank_duration
-                            print(f"DEBUG:       bank {bank} is ACTIVE at ms {ms}")
-                            break
-                        else:
-                            print(f"DEBUG:       bank {bank} is INACTIVE at ms {ms}")
-                        
-                        current_access += bank_access_count
+                print(f"DEBUG:     total_access_time_ms = {total_access_time_ms}ms")
                 
-                # Add to appropriate access type
-                if active_bank is not None:
-                    if op['type'] == 'read':
-                        read_accesses[active_bank] += int(active_accesses)
-                        print(f"DEBUG:     adding {int(active_accesses)} read accesses to bank {active_bank}")
-                    elif op['type'] == 'write':
-                        write_accesses[active_bank] += int(active_accesses)
-                        print(f"DEBUG:     adding {int(active_accesses)} write accesses to bank {active_bank}")
+                if total_access_time_ms <= 1.0:
+                    # Concurrent access: all banks in the group can be accessed simultaneously
+                    print(f"DEBUG:     using CONCURRENT access (≤1ms)")
+                    for bank in banks_in_group:
+                        bank_access_count = op['bank_accesses'].get(bank, 0)
+                        if bank_access_count > 0:
+                            if op['type'] == 'read':
+                                read_accesses[bank] += int(bank_access_count)
+                                print(f"DEBUG:       adding {int(bank_access_count)} read accesses to bank {bank}")
+                            elif op['type'] == 'write':
+                                write_accesses[bank] += int(bank_access_count)
+                                print(f"DEBUG:       adding {int(bank_access_count)} write accesses to bank {bank}")
+                else:
+                    # Sequential access: determine which bank should be active at this millisecond
+                    print(f"DEBUG:     using SEQUENTIAL access (>1ms)")
+                    current_access = 0
+                    active_bank = None
+                    active_accesses = 0
+                    
+                    for bank in banks_in_group:
+                        bank_access_count = op['bank_accesses'].get(bank, 0)
+                        if bank_access_count > 0:
+                            # Calculate the time period this bank should be active
+                            bank_duration = (bank_access_count / total_accesses) * op['duration']
+                            bank_start_ms = (current_access / total_accesses) * op['duration']
+                            bank_end_ms = bank_start_ms + bank_duration
+                            
+                            print(f"DEBUG:       bank {bank}: access_count={bank_access_count}, duration={bank_duration}ms")
+                            print(f"DEBUG:         active period: {bank_start_ms}ms to {bank_end_ms}ms")
+                            
+                            # Check if this bank should be active at current millisecond
+                            if bank_start_ms <= ms < bank_end_ms:
+                                active_bank = bank
+                                active_accesses = bank_access_count / bank_duration
+                                print(f"DEBUG:         bank {bank} is ACTIVE at ms {ms}")
+                                break
+                            else:
+                                print(f"DEBUG:         bank {bank} is INACTIVE at ms {ms}")
+                            
+                            current_access += bank_access_count
+                    
+                    # Add to appropriate access type
+                    if active_bank is not None:
+                        if op['type'] == 'read':
+                            read_accesses[active_bank] += int(active_accesses)
+                            print(f"DEBUG:       adding {int(active_accesses)} read accesses to bank {active_bank}")
+                        elif op['type'] == 'write':
+                            write_accesses[active_bank] += int(active_accesses)
+                            print(f"DEBUG:       adding {int(active_accesses)} write accesses to bank {active_bank}")
         
         print(f"DEBUG:   ms {ms} result: read={read_accesses}, write={write_accesses}")
         timeline.append((read_accesses, write_accesses))
@@ -318,7 +411,7 @@ def write_output_file(filename, steps_data, total_banks):
     """Write the bank-level access pattern to output file."""
     with open(filename, 'w') as f:
         # Write header
-        header_parts = ['step']
+        header_parts = ['#step']
         for i in range(total_banks):
             header_parts.append(f'read_{i}')
         for i in range(total_banks):
@@ -343,12 +436,15 @@ def main():
     print(f"DEBUG:   output_file = {args.output_file}")
     print(f"DEBUG:   total_banks = {args.total_banks}")
     print(f"DEBUG:   bank_size = {args.bank_size} MB")
-    print(f"DEBUG:   bank_groups = {args.bank_groups}")
+    print(f"DEBUG:   bank_per_row = {args.bank_per_row}")
+    print(f"DEBUG:   bank_per_col = {args.bank_per_col}")
+    print(f"DEBUG:   group_rows = {args.group_rows}")
+    print(f"DEBUG:   group_cols = {args.group_cols}")
+    print(f"DEBUG:   num_groups = {args.num_groups}")
     print(f"DEBUG:   stack_height = {args.stack_height}")
     print(f"DEBUG:   clock_freq = {args.clock_freq} MHz")
-    
     # Validate inputs
-    if args.total_banks % args.bank_groups != 0:
+    if args.num_groups and args.total_banks % args.num_groups != 0:
         print("Error: Total banks must be divisible by number of bank groups")
         sys.exit(1)
     
@@ -357,7 +453,15 @@ def main():
         sys.exit(1)
     
     # Create bank group mapping
-    bank_mapping = get_bank_group_mapping(args.total_banks, args.bank_groups, args.stack_height)
+    bank_mapping = get_bank_group_mapping(
+        args.total_banks, 
+        args.stack_height, 
+        args.bank_per_row, 
+        args.bank_per_col, 
+        args.group_rows, 
+        args.group_cols, 
+        args.num_groups
+    )
     print(f"DEBUG: bank_mapping = {bank_mapping}")
     
     # Parse input file
