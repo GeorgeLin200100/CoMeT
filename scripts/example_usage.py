@@ -209,6 +209,7 @@ layer_file_mem = config/hotspot/test_standalone1/mem.lcf
 power_trace_file = power.trace
 temperature_trace_file = temperature.trace
 init_file = init.temp
+init_file_external_mem = config/hotspot/3Dmem/mem.init
 steady_temp_file = steady.temp
 all_transient_file = all_transient.temp
 grid_steady_file = grid_steady.temp
