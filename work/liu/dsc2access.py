@@ -190,8 +190,8 @@ class Dsc2AccessConverter:
         
         return duration
 
-    def _distribute_access_to_banks(self, access_type, bank_group, access_amount_mb, lanewidth):
-        """Distribute access amount across banks in the bank group sequentially."""
+    def _distribute_access_to_banks(self, access_type, bank_group, access_amount_mb, lanewidth, starting_stack=None):
+        """Distribute access amount across banks in the bank group sequentially, starting from specified stack."""
         banks_in_group = self.bank_mapping[bank_group]
         access_amount_bytes = access_amount_mb * 1024 * 1024  # Convert MB to bytes
         
@@ -199,7 +199,29 @@ class Dsc2AccessConverter:
             print(f"DEBUG: distribute_access_to_banks - {access_type} access to bank group {bank_group}")
             print(f"DEBUG:   access_amount = {access_amount_mb} MB = {access_amount_bytes} bytes")
             print(f"DEBUG:   banks_in_group = {banks_in_group}")
+            print(f"DEBUG:   starting_stack = {starting_stack}")
             print(f"DEBUG:   bank_size = {self.bank_size} MB = {self.bank_size * 1024 * 1024} bytes")
+        
+        # If starting_stack is specified, filter banks to only those from that stack
+        if starting_stack is not None:
+            banks_per_stack = self.total_banks // self.stack_height
+            stack_start_bank = starting_stack * banks_per_stack
+            stack_end_bank = (starting_stack + 1) * banks_per_stack
+            
+            # Filter banks to only those from the specified stack
+            filtered_banks = [bank for bank in banks_in_group if stack_start_bank <= bank < stack_end_bank]
+            
+            if self.debug:
+                print(f"DEBUG:   stack {starting_stack} banks: {stack_start_bank} to {stack_end_bank-1}")
+                print(f"DEBUG:   filtered_banks = {filtered_banks}")
+            
+            # If no banks in this stack for this group, return empty
+            if not filtered_banks:
+                if self.debug:
+                    print(f"DEBUG:   no banks in stack {starting_stack} for group {bank_group}")
+                return {}
+            
+            banks_in_group = filtered_banks
         
         # Initialize bank accesses
         bank_accesses = {bank: 0 for bank in banks_in_group}
@@ -251,18 +273,19 @@ class Dsc2AccessConverter:
         
         # Process each operation to get its duration and bank accesses
         operation_timeline = []
-        
+        has_prs_1ms_op = []
         for operation in operations:
-            # Parse operation: read@bank_group@access_amount@lanewidth
+            # Parse operation: read@bank_group@starting_stack@access_amount@lanewidth
             parts = operation.split('@')
-            if len(parts) != 4:
+            if len(parts) != 5:
                 print(f"Warning: Invalid operation format: {operation}")
                 continue
                 
-            access_type, bank_group_str, access_amount_str, lanewidth_str = parts
+            access_type, bank_group_str, starting_stack_str, access_amount_str, lanewidth_str = parts
             
             try:
                 bank_group = int(bank_group_str)
+                starting_stack = int(starting_stack_str)
                 access_amount = float(access_amount_str)
                 op_lanewidth = float(lanewidth_str)
             except ValueError:
@@ -273,9 +296,14 @@ class Dsc2AccessConverter:
                 print(f"Warning: Invalid bank group {bank_group}")
                 continue
             
+            if starting_stack < 0 or starting_stack >= self.stack_height:
+                print(f"Warning: Invalid starting stack {starting_stack}")
+                continue
+            
             if self.debug:
                 print(f"DEBUG: processing operation: {operation}")
                 print(f"DEBUG:   access_type = {access_type}, bank_group = {bank_group}")
+                print(f"DEBUG:   starting_stack = {starting_stack}")
                 print(f"DEBUG:   access_amount = {access_amount} MB, lanewidth = {op_lanewidth} B")
             
             # Calculate duration of this operation
@@ -283,7 +311,7 @@ class Dsc2AccessConverter:
             
             # Distribute access to banks
             bank_accesses = self._distribute_access_to_banks(
-                access_type, bank_group, access_amount, op_lanewidth
+                access_type, bank_group, access_amount, op_lanewidth, starting_stack
             )
             
             # Add to timeline
@@ -292,6 +320,7 @@ class Dsc2AccessConverter:
                 'duration': duration_ms,
                 'bank_accesses': bank_accesses,
                 'bank_group': bank_group,
+                'starting_stack': starting_stack,
                 'lanewidth': op_lanewidth
             })
             
@@ -301,8 +330,11 @@ class Dsc2AccessConverter:
         # Find the maximum duration among all operations in this step
         max_duration = max(op['duration'] for op in operation_timeline) if operation_timeline else 1
         
+        # Find the maximum lanewidth among all operations in this step
+        max_lanewidth = max(op['lanewidth'] for op in operation_timeline) if operation_timeline else 1
         if self.debug:
             print(f"DEBUG: max_duration = {max_duration}ms")
+            print(f"DEBUG: max_lanewidth = {max_lanewidth} B")
         
         # Generate millisecond-by-millisecond access pattern
         timeline = []
@@ -318,7 +350,7 @@ class Dsc2AccessConverter:
                 total_accesses = sum(op['bank_accesses'].values())
                 
                 if self.debug:
-                    print(f"DEBUG:   operation {op['type']}@{op['bank_group']}: total_accesses={total_accesses}")
+                    print(f"DEBUG:   operation {op['type']}@{op['bank_group']}@{op['starting_stack']}: total_accesses={total_accesses}")
                 
                 if total_accesses > 0:
                     # Check if this operation can be completed within 1ms (concurrent access)
@@ -336,19 +368,21 @@ class Dsc2AccessConverter:
                     
                     if total_access_time_ms <= 1.0:
                         # Concurrent access: all banks in the group can be accessed simultaneously
-                        if self.debug:
-                            print(f"DEBUG:     using CONCURRENT access (≤1ms)")
-                        for bank in banks_in_group:
-                            bank_access_count = op['bank_accesses'].get(bank, 0)
-                            if bank_access_count > 0:
-                                if op['type'] == 'read':
-                                    read_accesses[bank] += int(bank_access_count)
-                                    if self.debug:
-                                        print(f"DEBUG:       adding {int(bank_access_count)} read accesses to bank {bank}")
-                                elif op['type'] == 'write':
-                                    write_accesses[bank] += int(bank_access_count)
-                                    if self.debug:
-                                        print(f"DEBUG:       adding {int(bank_access_count)} write accesses to bank {bank}")
+                        if op not in has_prs_1ms_op:
+                            if self.debug:
+                                print(f"DEBUG:     using CONCURRENT access (≤1ms)")
+                            for bank in banks_in_group:
+                                bank_access_count = op['bank_accesses'].get(bank, 0)
+                                if bank_access_count > 0:
+                                    if op['type'] == 'read':
+                                        read_accesses[bank] += int(bank_access_count * op['lanewidth'] / max_lanewidth) #scale the access count by the lanewidth
+                                        if self.debug:
+                                            print(f"DEBUG:       adding {int(bank_access_count)} read accesses to bank {bank}")
+                                    elif op['type'] == 'write':
+                                        write_accesses[bank] += int(bank_access_count * op['lanewidth'] / max_lanewidth) #scale the access count by the lanewidth
+                                        if self.debug:
+                                            print(f"DEBUG:       adding {int(bank_access_count)} write accesses to bank {bank}")
+                            has_prs_1ms_op.append(op)
                     else:
                         # Sequential access: determine which banks should be active at this millisecond
                         if self.debug:
@@ -400,11 +434,11 @@ class Dsc2AccessConverter:
                         # Add all active banks to appropriate access type
                         for active_bank, active_accesses in active_banks:
                             if op['type'] == 'read':
-                                read_accesses[active_bank] += int(active_accesses)
+                                read_accesses[active_bank] += int(active_accesses * op['lanewidth'] / max_lanewidth) #scale the access count by the lanewidth
                                 if self.debug:
                                     print(f"DEBUG:       adding {int(active_accesses)} read accesses to bank {active_bank}")
                             elif op['type'] == 'write':
-                                write_accesses[active_bank] += int(active_accesses)
+                                write_accesses[active_bank] += int(active_accesses * op['lanewidth'] / max_lanewidth) #scale the access count by the lanewidth
                                 if self.debug:
                                     print(f"DEBUG:       adding {int(active_accesses)} write accesses to bank {active_bank}")
             

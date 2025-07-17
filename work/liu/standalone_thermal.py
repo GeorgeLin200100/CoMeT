@@ -259,8 +259,8 @@ class StandaloneMemTherm:
         # Set default values for required parameters
         defaults = {
             'memory/bank_size': 64,  # 64MB
-            'memory/energy_per_read_access': 1.0,
-            'memory/energy_per_write_access': 1.0,
+            'memory/energy_per_read_access': 20, #in nJ (10pJ/bit * 2048bits)
+            'memory/energy_per_write_access': 20, #in nJ (10pJ/bit * 2048bits)
             'memory/logic_core_power': 0.1,
             'memory/energy_per_refresh_access': 100.0,
             'memory/t_refi': 7.8,
@@ -635,7 +635,7 @@ class StandaloneMemTherm:
             self.step(self.sampling_interval)
             
             # Small delay to make output readable
-            time.sleep(0.1)
+            # time.sleep(0.1)
         
         print("\nThermal simulation completed")
 
