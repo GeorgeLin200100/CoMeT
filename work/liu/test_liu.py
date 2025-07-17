@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_baseline2.py
+test_liu.py
 
 Example script demonstrating how to use the standalone thermal simulation
 with custom bank access patterns.
@@ -15,6 +15,7 @@ print(sys.executable)
 import numpy as np
 from standalone_thermal import StandaloneMemTherm, BankAccessProvider
 from dsc2access import Dsc2AccessConverter
+from table_utils import csv_to_aligned_table
 import random
 
 class FileAccessProvider(BankAccessProvider):
@@ -37,8 +38,17 @@ class FileAccessProvider(BankAccessProvider):
                     if not line or line.startswith('#'):
                         continue
                     
-                    # Expected format: step,read_0,read_1,...,read_63,write_0,write_1,...,write_63
-                    parts = line.split(',')
+                    # Handle both comma-separated and space-aligned formats
+                    if ',' in line:
+                        # Comma-separated format
+                        parts = line.split(',')
+                    else:
+                        # Space-aligned format - split on whitespace and filter out empty strings
+                        parts = [part.strip() for part in line.split() if part.strip()]
+                    
+                    # Skip header line (first non-comment line that doesn't start with a number)
+                    if not parts[0].isdigit():
+                        continue
                     
                     # Check if we have enough data: step + 64 reads + 64 writes = 129 columns
                     expected_columns = 1 + 2 * self.num_banks
@@ -173,7 +183,7 @@ enabled = false
     print("Created example configuration file: example_config.cfg")
 
 
-def run_file_based_simulation(duration_ms=20):
+def run_file_based_simulation(duration_ms=20, output_file='output_baseline1.csv', output_dir='output_baseline1'):
     """Run simulation with file-based access data
     
     Args:
@@ -184,7 +194,7 @@ def run_file_based_simulation(duration_ms=20):
     print("="*50)
     
     #access file
-    access_file = 'output_baseline2.csv'
+    access_file = output_file
     
     # Create access provider with file input
     access_provider = FileAccessProvider(64, access_file)
@@ -204,7 +214,7 @@ def run_file_based_simulation(duration_ms=20):
     print(f"Completed simulation with file-based pattern ({duration_ms}ms)")
     
     # Move output to dedicated directory
-    dst_dir = 'output_baseline2'
+    dst_dir = output_dir
     if os.path.exists(dst_dir):
         shutil.rmtree(dst_dir)
     if os.path.exists("output"):
@@ -217,6 +227,12 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='CoMeT Standalone Thermal Simulation Example')
     parser.add_argument('--duration', '-d', type=int, default=20, 
                        help='Simulation duration in milliseconds (default: 20ms)')
+    parser.add_argument('--input_file', '-i', type=str, default='input_baseline1.csv', 
+                       help='Input file (default: input_baseline1.csv)')
+    parser.add_argument('--output_file', '-o', type=str, default='output_baseline1.csv', 
+                       help='Output file (default: output_baseline1.csv)')
+    parser.add_argument('--output_dir', '-od', type=str, default='output_baseline1', 
+                       help='Output directory (default: output_baseline1)')
     return parser.parse_args()
 
 def main():
@@ -252,10 +268,14 @@ def main():
         group_cols=2,
         num_groups=4,
     )
-    converter.convert_file('input_baseline2.csv', 'output_baseline2.csv')
+    converter.convert_file(args.input_file, args.output_file)
     
     # Run example simulation with built-in patterns
-    run_file_based_simulation(args.duration)
+    run_file_based_simulation(args.duration, args.output_file, args.output_dir)
+
+    # Convert CSV to aligned table
+    csv_to_aligned_table(args.output_dir + "/" + "temperature.trace", args.output_dir + "/" + "temperature.trace" + '.table')
+    csv_to_aligned_table(args.output_dir + "/" + "power.trace", args.output_dir + "/" + "power.trace" + '.table')
     
     print("\nExample completed successfully!")
     print("Check the output files for thermal simulation results.")

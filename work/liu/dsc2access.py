@@ -323,11 +323,16 @@ class Dsc2AccessConverter:
                 if total_accesses > 0:
                     # Check if this operation can be completed within 1ms (concurrent access)
                     # Calculate total access time for this operation
+                    # total_accesses is the number of accesses, each access is op['lanewidth'] bytes
+                    total_bytes = total_accesses * op['lanewidth']
                     access_per_ms = self._calculate_access_amount(op['lanewidth'])
-                    total_access_time_ms = total_accesses / access_per_ms if access_per_ms > 0 else 1
+                    total_access_time_ms = total_bytes / access_per_ms if access_per_ms > 0 else 1
                     
                     if self.debug:
-                        print(f"DEBUG:     total_access_time_ms = {total_access_time_ms}ms")
+                        print(f"DEBUG:     total_accesses = {total_accesses}")
+                        print(f"DEBUG:     total_bytes = {total_accesses} * {op['lanewidth']} = {total_bytes}")
+                        print(f"DEBUG:     access_per_ms = {access_per_ms} bytes/ms")
+                        print(f"DEBUG:     total_access_time_ms = {total_bytes} / {access_per_ms} = {total_access_time_ms}ms")
                     
                     if total_access_time_ms <= 1.0:
                         # Concurrent access: all banks in the group can be accessed simultaneously
@@ -345,12 +350,11 @@ class Dsc2AccessConverter:
                                     if self.debug:
                                         print(f"DEBUG:       adding {int(bank_access_count)} write accesses to bank {bank}")
                     else:
-                        # Sequential access: determine which bank should be active at this millisecond
+                        # Sequential access: determine which banks should be active at this millisecond
                         if self.debug:
-                            print(f"DEBUG:     using SEQUENTIAL access (>1ms)")
+                            print(f"DEBUG:     using SEQUENTIAL access (>1ms) for ms {ms}")
                         current_access = 0
-                        active_bank = None
-                        active_accesses = 0
+                        active_banks = []  # Collect all active banks for this millisecond
                         
                         for bank in banks_in_group:
                             bank_access_count = op['bank_accesses'].get(bank, 0)
@@ -365,20 +369,36 @@ class Dsc2AccessConverter:
                                     print(f"DEBUG:         active period: {bank_start_ms}ms to {bank_end_ms}ms")
                                 
                                 # Check if this bank should be active at current millisecond
-                                if bank_start_ms <= ms < bank_end_ms:
-                                    active_bank = bank
-                                    active_accesses = bank_access_count / bank_duration
+                                # A bank is active if its active period overlaps with the current millisecond
+                                # Current millisecond period: [ms, ms+1)
+                                # Bank active period: [bank_start_ms, bank_end_ms)
+                                # Overlap occurs if: bank_start_ms < ms+1 AND bank_end_ms > ms
+                                if bank_start_ms < (ms + 1) and bank_end_ms > ms:
+                                    # Calculate how much of this bank's access should occur in this millisecond
+                                    # The proportion of the bank's duration that overlaps with this millisecond
+                                    overlap_start = max(bank_start_ms, ms)
+                                    overlap_end = min(bank_end_ms, ms + 1)
+                                    overlap_duration = overlap_end - overlap_start
+                                    bank_total_duration = bank_end_ms - bank_start_ms
+                                    
+                                    # Proportion of bank's accesses that should occur in this millisecond
+                                    proportion = overlap_duration / bank_total_duration
+                                    active_accesses = bank_access_count * proportion
+                                    
+                                    active_banks.append((bank, active_accesses))
                                     if self.debug:
-                                        print(f"DEBUG:         bank {bank} is ACTIVE at ms {ms}")
-                                    break
+                                        print(f"DEBUG:         bank {bank} is ACTIVE at ms {ms} (overlap: {overlap_start:.3f}ms to {overlap_end:.3f}ms, proportion: {proportion:.3f}, accesses: {active_accesses:.0f})")
                                 else:
                                     if self.debug:
                                         print(f"DEBUG:         bank {bank} is INACTIVE at ms {ms}")
                                 
                                 current_access += bank_access_count
                         
-                        # Add to appropriate access type
-                        if active_bank is not None:
+                        if self.debug:
+                            print(f"DEBUG:       active_banks for ms {ms}: {active_banks}")
+                        
+                        # Add all active banks to appropriate access type
+                        for active_bank, active_accesses in active_banks:
                             if op['type'] == 'read':
                                 read_accesses[active_bank] += int(active_accesses)
                                 if self.debug:
@@ -442,18 +462,36 @@ class Dsc2AccessConverter:
             # Write header
             header_parts = ['#step']
             for i in range(self.total_banks):
-                header_parts.append(f'read_{i}')
+                header_parts.append(f'read_{i:02d}')
             for i in range(self.total_banks):
-                header_parts.append(f'write_{i}')
+                header_parts.append(f'write_{i:02d}')
             
             f.write(','.join(header_parts) + '\n')
             
-            # Write data
+            # Write data with consistent formatting
             for step_num, (read_accesses, write_accesses) in steps_data:
-                row_parts = [str(step_num)]
-                row_parts.extend([str(int(access)) for access in read_accesses])
-                row_parts.extend([str(int(access)) for access in write_accesses])
+                row_parts = [f'{step_num:02d}']
+                row_parts.extend([f'{int(access):08d}' for access in read_accesses])
+                row_parts.extend([f'{int(access):08d}' for access in write_accesses])
                 f.write(','.join(row_parts) + '\n')
+
+    def write_output_table(self, filename, steps_data):
+        # Prepare headers
+        headers = ['step'] + [f'read_{i}' for i in range(self.total_banks)] + [f'write_{i}' for i in range(self.total_banks)]
+        # Gather all rows as strings
+        rows = []
+        for step_num, (read_accesses, write_accesses) in steps_data:
+            row = [str(step_num)] + [str(int(x)) for x in read_accesses] + [str(int(x)) for x in write_accesses]
+            rows.append(row)
+        # Calculate max width for each column
+        col_widths = [max(len(headers[i]), max(len(row[i]) for row in rows)) for i in range(len(headers))]
+        # Write to file
+        with open(filename, 'w') as f:
+            # Write header
+            f.write('  '.join(headers[i].ljust(col_widths[i]) for i in range(len(headers))) + '\n')
+            # Write rows
+            for row in rows:
+                f.write('  '.join(row[i].rjust(col_widths[i]) for i in range(len(row))) + '\n')
 
     def convert_file(self, input_file, output_file):
         """
@@ -503,7 +541,8 @@ class Dsc2AccessConverter:
             print(f"DEBUG: total steps_data entries = {len(steps_data)}")
         
         # Write output file
-        self.write_output_file(output_file, steps_data)
+        #self.write_output_file(output_file, steps_data)
+        self.write_output_table(output_file, steps_data)
         
         if self.debug:
             print(f"Successfully converted {input_file} to {output_file}")
