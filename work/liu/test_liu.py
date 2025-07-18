@@ -16,14 +16,16 @@ import numpy as np
 from standalone_thermal import StandaloneMemTherm, BankAccessProvider
 from dsc2access import Dsc2AccessConverter
 from table_utils import csv_to_aligned_table
+from config_manager import ConfigManager
 import random
 
 class FileAccessProvider(BankAccessProvider):
     """Access provider that reads ms-accurate access data from a file"""
     
-    def __init__(self, num_banks, access_file):
+    def __init__(self, num_banks, access_file, repeat_times=1):
         super().__init__(num_banks)
         self.access_file = access_file
+        self.repeat_times = repeat_times
         self.current_step = 0
         self.access_data = self.load_access_data()
         
@@ -44,7 +46,10 @@ class FileAccessProvider(BankAccessProvider):
                         parts = line.split(',')
                     else:
                         # Space-aligned format - split on whitespace and filter out empty strings
-                        parts = [part.strip() for part in line.split() if part.strip()]
+                        # Use regex to split on multiple whitespace characters
+                        import re
+                        parts = re.split(r'\s+', line.strip())
+                        parts = [part.strip() for part in parts if part.strip()]
                     
                     # Skip header line (first non-comment line that doesn't start with a number)
                     if not parts[0].isdigit():
@@ -83,6 +88,8 @@ class FileAccessProvider(BankAccessProvider):
                     })
             
             print(f"Loaded {len(access_data)} access steps from {self.access_file}")
+            if self.repeat_times > 1:
+                print(f"Will repeat this pattern {self.repeat_times} times (total {len(access_data) * self.repeat_times} steps)")
             return access_data
             
         except FileNotFoundError:
@@ -94,8 +101,14 @@ class FileAccessProvider(BankAccessProvider):
     
     def update_pattern(self):
         """Update access pattern for next time step"""
-        if self.current_step < len(self.access_data):
-            data = self.access_data[self.current_step]
+        if self.access_data:
+            # Calculate the actual step within the original pattern
+            original_pattern_length = len(self.access_data)
+            if original_pattern_length == 0:
+                return
+                
+            actual_step = self.current_step % original_pattern_length
+            data = self.access_data[actual_step]
             self.set_access_data(
                 data['read_accesses'],
                 data['write_accesses'],
@@ -104,112 +117,62 @@ class FileAccessProvider(BankAccessProvider):
                 data['bank_modes']
             )
             self.current_step += 1
+            
+            # Check if we've completed all repeats
+            total_steps = original_pattern_length * self.repeat_times
+            if self.current_step >= total_steps:
+                print(f"Completed {self.repeat_times} cycles of access pattern ({total_steps} total steps)")
         else:
-            # End of file - keep last pattern or set to zero
-            print(f"Warning: Reached end of access file at step {self.current_step}")
-            # Optionally set to zero accesses
-            # self.set_access_data([0] * self.num_banks, [0] * self.num_banks)
+            # No access data available
+            print(f"Warning: No access data available at step {self.current_step}")
 
-def create_sample_config():
-    """Create a sample configuration file for testing"""
-    config_content = """[general]
-total_cores = 4
-
-[memory]
-bank_size = 28
-energy_per_read_access = 20.55
-energy_per_write_access = 20.55
-logic_core_power = 0.272
-energy_per_refresh_access = 3.55
-t_refi = 7.8
-no_refesh_commands_in_t_refw = 8
-banks_in_x = 4
-banks_in_y = 4
-banks_in_z = 4
-num_banks = 64
-cores_in_x = 2
-cores_in_y = 2
-cores_in_z = 1
-type_of_stack = 3Dmem
-
-[hotspot]
-sampling_interval = 1000000
-tool_path = ../../hotspot_tool
-config_path = ./  
-hotspot_config_file_mem = config/liu/mem_hotspot.config
-floorplan_folder = config/liu
-layer_file_mem = config/liu/mem.lcf
-
-[hotspot/log_files_mem]
-power_trace_file = power.trace
-temperature_trace_file = temperature.trace
-init_file = init.temp
-init_file_external_mem = 
-steady_temp_file = steady.temp
-all_transient_file = all_transient.temp
-grid_steady_file = grid_steady.temp
-
-[hotspot/log_files]
-combined_temperature_trace_file = combined_temperature.trace
-combined_power_trace_file = combined_power.trace
-
-[scheduler/open/dram/dtm]
-dtm = off
-
-[perf_model/dram/lowpower]
-lpm_dynamic_power = 0.5
-lpm_leakage_power = 0.1
-
-[perf_model/core]
-min_frequency = 1.0
-max_frequency = 4.0
-frequency_step_size = 0.1
-
-[power]
-technology_node = 22
-vdd = 1.2
-vth = 0.3
-
-[core_thermal]
-enabled = true
-
-[reliability]
-enabled = false
-"""
-    
-    with open('example_config.cfg', 'w') as f:
-        f.write(config_content)
-    
-    print("Created example configuration file: example_config.cfg")
-
-
-def run_file_based_simulation(duration_ms=20, output_file='output_baseline1.csv', output_dir='output_baseline1'):
+def run_file_based_simulation(duration_ms=20, output_file='output_baseline1.csv', output_dir='output_baseline1', config_manager=None, repeat_times=1, no_feedback=False):
     """Run simulation with file-based access data
     
     Args:
         duration_ms (int): Simulation duration in milliseconds
+        config_manager (ConfigManager): Configuration manager instance
+        repeat_times (int): Number of times to repeat the access pattern
     """
     print("\n" + "="*50)
     print(f"Running simulation with file-based access pattern for {duration_ms}ms")
+    print(f"Repeating access pattern {repeat_times} times")
     print("="*50)
+    
+    # Print configuration summary
+    if config_manager:
+        config_manager.print_summary()
     
     #access file
     access_file = output_file
     
-    # Create access provider with file input
-    access_provider = FileAccessProvider(64, access_file)
-
-    create_sample_config()
+    # Create access provider with file input using config values
+    num_banks = config_manager.num_banks
+    access_provider = FileAccessProvider(num_banks, access_file, repeat_times)
     
     # Create thermal simulation
-    thermal_sim = StandaloneMemTherm('example_config.cfg', access_provider)
+    thermal_sim = StandaloneMemTherm(config_manager.config_file, access_provider)
+    
+    # Calculate simulation duration based on access pattern length and repeat times
+    # Each step in the access pattern represents 1ms
+    original_pattern_length = len(access_provider.access_data)
+    total_pattern_length = original_pattern_length * repeat_times
+    
+    if duration_ms > 0:
+        # Use the specified duration, but ensure it's not longer than the pattern
+        simulation_duration_ms = min(duration_ms, total_pattern_length)
+        print(f"Using simulation duration: {simulation_duration_ms}ms (pattern has {total_pattern_length}ms total)")
+    else:
+        # If duration is 0 or negative, use the full pattern length
+        simulation_duration_ms = total_pattern_length
+        print(f"Using full pattern duration: {simulation_duration_ms}ms")
     
     # Convert milliseconds to nanoseconds (1ms = 1,000,000ns)
-    duration_ns = duration_ms * 1000000
-    print(f"Running simulation for {duration_ms}ms ({duration_ns}ns)")
+    duration_ns = simulation_duration_ms * 1000000
+    print(f"Running simulation for {simulation_duration_ms}ms ({duration_ns}ns)")
     
     # Run simulation for specified duration
-    thermal_sim.run(duration_ns)
+    thermal_sim.run(duration_ns, no_feedback)
     
     print(f"Completed simulation with file-based pattern ({duration_ms}ms)")
     
@@ -233,6 +196,12 @@ def parse_arguments():
                        help='Output file (default: output_baseline1.csv)')
     parser.add_argument('--output_dir', '-od', type=str, default='output_baseline1', 
                        help='Output directory (default: output_baseline1)')
+    parser.add_argument('--config_file', '-cf', type=str, default='example_config.cfg', 
+                       help='Configuration file (default: example_config.cfg)')
+    parser.add_argument('--repeat_times', '-r', type=int, default=1,
+                       help='Number of times to repeat the access pattern (default: 1)')
+    parser.add_argument('--no_feedback', '-nf', default=False,
+                       help='Disable feedback loop, hotspot will only run once (default: False)')
     return parser.parse_args()
 
 def main():
@@ -240,7 +209,11 @@ def main():
     # Parse command line arguments
     args = parse_arguments()
     
-    print("CoMeT Standalone Thermal Simulation Example")
+    # Capture the full command line
+    import sys
+    command_line = ' '.join(sys.argv)
+    
+    # print("CoMeT Standalone Thermal Simulation Example")
     print("="*50)
     print(f"Simulation duration: {args.duration}ms")
     
@@ -253,32 +226,58 @@ def main():
         # Fallback to basic random without numpy
         np = None
     
+    # Load configuration
+    config_manager = ConfigManager(args.config_file)
+    
     os.system("echo creating floorplan files for first run")
-    os.system("mkdir -p ./config/liu")
-    os.system("python3 ../../floorplanlib/create.py --mode 3Dmem --cores 2x2 --corex 3.414mm --corey 3.414mm --banks 4x4x4 --bankx 3.414mm --banky 3.414mm --out ./config/liu")
+    os.system("mkdir -p ./config")
+    # Build floorplan creation command from config
+    floorplan_cmd = (
+        f"python3 ../../floorplanlib/create.py "
+        f"--mode {config_manager.type_of_stack} "
+        f"--cores {config_manager.cores_in_x}x{config_manager.cores_in_y} "
+        f"--corex {6.828/config_manager.cores_in_x}mm --corey {6.828/config_manager.cores_in_y}mm "
+        f"--banks {config_manager.banks_in_x}x{config_manager.banks_in_y}x{config_manager.banks_in_z} "
+        f"--bankx {6.828/config_manager.banks_in_x}mm --banky {6.828/config_manager.banks_in_y}mm "
+        f"--out ./config"
+    )
+    os.system(floorplan_cmd)
     
     converter = Dsc2AccessConverter(
-        total_banks=64,
-        bank_size=28,
-        stack_height=4,
-        clock_freq=500,
-        bank_per_row=4,
-        bank_per_col=4,
-        group_rows=2,
-        group_cols=2,
-        num_groups=4,
+        total_banks=config_manager.num_banks,
+        bank_size=config_manager.bank_size,
+        stack_height=config_manager.banks_in_z,
+        clock_freq=config_manager.clock_freq,
+        bank_per_row=config_manager.banks_in_x,
+        bank_per_col=config_manager.banks_in_y,
+        group_rows=config_manager.group_rows, # each group has "group_rows" rows
+        group_cols=config_manager.group_cols, # each group has "group_cols" columns
+        num_groups=config_manager.num_groups,
+        debug=False
     )
     converter.convert_file(args.input_file, args.output_file)
     
     # Run example simulation with built-in patterns
-    run_file_based_simulation(args.duration, args.output_file, args.output_dir)
+    run_file_based_simulation(args.duration, args.output_file, args.output_dir, config_manager, args.repeat_times, args.no_feedback)
+
+    # Write command line to output directory
+    command_line_file = os.path.join(args.output_dir, "commandline.txt")
+    try:
+        with open(command_line_file, 'w') as f:
+            f.write(f"Command executed: {command_line}\n")
+            f.write(f"Execution time: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Working directory: {os.getcwd()}\n")
+            f.write(f"Python executable: {sys.executable}\n")
+        print(f"Command line saved to: {command_line_file}")
+    except Exception as e:
+        print(f"Warning: Could not write command line to file: {e}")
 
     # Convert CSV to aligned table
     csv_to_aligned_table(args.output_dir + "/" + "temperature.trace", args.output_dir + "/" + "temperature.trace" + '.table')
     csv_to_aligned_table(args.output_dir + "/" + "power.trace", args.output_dir + "/" + "power.trace" + '.table')
     
-    print("\nExample completed successfully!")
-    print("Check the output files for thermal simulation results.")
+    # print("\nExample completed successfully!")
+    # print("Check the output files for thermal simulation results.")
 
 if __name__ == "__main__":
     main() 

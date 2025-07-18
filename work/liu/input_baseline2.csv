@@ -1,5 +1,5 @@
-#Step    (read/write@Bank Group@Access Amount(in MB)@lanewidth(in Byte)) * N
-0       read@0@110@4
-        read@1@110@4
-        read@2@110@4
-        read@3@320@256
+#Step    (read/write@Bank Group@Starting Stack@Access Amount(in MB)@lanewidth(in Byte)) * N
+0       read@0@0@110@4
+        read@1@0@110@4
+        read@2@0@110@4
+        read@3@0@320@256

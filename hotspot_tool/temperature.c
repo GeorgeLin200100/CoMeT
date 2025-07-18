@@ -754,11 +754,11 @@ void steady_state_temp(RC_model_t *model, double *power, double *temp)
 			d_temp = hotspot_vector(model);
 			temp_old = hotspot_vector(model);
 			power_new = hotspot_vector(model);
-                        printf("Arch type : %s\n", model->config->type);
+                        //printf("Arch type : %s\n", model->config->type);
 			for (leak_iter=0;(!leak_convg_true)&&(leak_iter<=LEAKAGE_MAX_ITER);leak_iter++){
                 
                 if(strcmp(model->config->type,"3Dmem")==0 || strcmp(model->config->type,"DDR")==0){
-                	printf("Memory type 3Dmem/DDR: %s\n", model->config->type);
+                	//printf("Memory type 3Dmem/DDR: %s\n", model->config->type);
 					for(k=0, base=0; k < model->grid->n_layers; k++) {
 				 // printf("k=%d\n",k);					
 					if(model->grid->layers[k].has_power)
@@ -791,7 +791,7 @@ void steady_state_temp(RC_model_t *model, double *power, double *temp)
 
 //for Core
             else if(strcmp(model->config->type,"Core")==0){
-            	printf("Arch type: %s\n", model->config->type);
+            	//printf("Arch type: %s\n", model->config->type);
 				for(k=0, base=0; k < model->grid->n_layers; k++) {
 				 // printf("k=%d\n",k);					
 					if(model->grid->layers[k].has_power)
@@ -817,7 +817,7 @@ void steady_state_temp(RC_model_t *model, double *power, double *temp)
 
 //for 3D (WIO)
                     else if(strcmp(model->config->type,"3D")==0){
-                                printf("Arch type 3D: %s\n", model->config->type);
+                                //printf("Arch type 3D: %s\n", model->config->type);
 				for(k=0, base=0; k < model->grid->n_layers; k++) {
 				 // printf("k=%d\n",k);					
 					if(model->grid->layers[k].has_power)
@@ -845,7 +845,7 @@ void steady_state_temp(RC_model_t *model, double *power, double *temp)
 //For 2.5D
                         
                     else if(strcmp(model->config->type,"2.5D")==0){
-                                printf("Arch type 2.5D: %s\n", model->config->type);
+                                //printf("Arch type 2.5D: %s\n", model->config->type);
 				for(k=0, base=0; k < model->grid->n_layers; k++) {
 				 // printf("k=%d\n",k);					
 					if(model->grid->layers[k].has_power)
@@ -979,7 +979,7 @@ void compute_temp(RC_model_t *model, double *power, double *temp, double *tot_po
 //					base += model->grid->layers[k].flp->n_units;	
 //			}
                             if(strcmp(model->config->type,"3Dmem")==0 || strcmp(model->config->type,"DDR")==0){
-                                printf("Memory type 3Dmem/DDR: %s\n", model->config->type);
+                                //printf("Memory type 3Dmem/DDR: %s\n", model->config->type);
 				for(k=0, base=0; k < model->grid->n_layers; k++) {
 				 //printf("k=%d\n",k);					
 					if(model->grid->layers[k].has_power)
@@ -1012,7 +1012,7 @@ void compute_temp(RC_model_t *model, double *power, double *temp, double *tot_po
 
 // Core
                     else if(strcmp(model->config->type,"Core")==0){
-                                printf("Arch type: %s\n", model->config->type);
+                                //printf("Arch type: %s\n", model->config->type);
 				for(k=0, base=0; k < model->grid->n_layers; k++) {
 				 // printf("k=%d\n",k);					
 					if(model->grid->layers[k].has_power)
@@ -1040,7 +1040,7 @@ void compute_temp(RC_model_t *model, double *power, double *temp, double *tot_po
 
 //for 3D (WIO)
                     else if(strcmp(model->config->type,"3D")==0){
-                                printf("Arch type 3D: %s\n", model->config->type);
+                                //printf("Arch type 3D: %s\n", model->config->type);
 				for(k=0, base=0; k < model->grid->n_layers; k++) {
 				 // printf("k=%d\n",k);					
 					if(model->grid->layers[k].has_power)
@@ -1068,7 +1068,7 @@ void compute_temp(RC_model_t *model, double *power, double *temp, double *tot_po
 //For 2.5D
                         
                     else if(strcmp(model->config->type,"2.5D")==0){
-                                printf("Arch type 2.5D: %s\n", model->config->type);
+                                //printf("Arch type 2.5D: %s\n", model->config->type);
 				for(k=0, base=0; k < model->grid->n_layers; k++) {
 				 // printf("k=%d\n",k);					
 					if(model->grid->layers[k].has_power)

@@ -14,9 +14,10 @@ endif
 
 ifeq ($(SUPERLU), 1)
 #Super LU
-SuperLUroot	= /mnt/disk1/hotspot_sniper/SuperLU_4.3/
+SuperLUroot	= ../superlu/SuperLU_4.3/
 SUPERLULIB 	= $(SuperLUroot)/lib/libsuperlu_4.3.a
-BLASLIB    	= -L $(SuperLUroot) -lblas
+#BLASLIB    	= -L $(SuperLUroot) -lblas
+BLASLIB    	= -L /usr/include/x86_64-linux-gnu/blas -lblas
 SLU_HEADER  = $(SuperLUroot)/SRC
 
 MATHACCEL	= none
@@ -170,7 +171,7 @@ MISCHDR = util.h wire.h
 MISCIN	= hotspot.config
 
 # all objects
-OBJ	= $(TEMPOBJ) $(PACKOBJ) $(BLKOBJ) $(GRIDOBJ) $(FLPOBJ) $(MISCOBJ)
+OBJ	= $(TEMPOBJ) $(PACKOBJ) $(BLKOBJ) $(GRIDOBJ) $(FLPOBJ) $(MISCOBJ) globals.o
 
 # targets
 all:	hotspot hotfloorplan lib

@@ -143,8 +143,8 @@ void global_config_from_strs(global_config_t *config, str_pair *table, int size)
   
 
   if ((idx = get_str_index(table, size, "l")) >= 0) {
-      printf("idx = %u\n", idx);
-      printf("table[idx].value = %s\n", table[idx].value);
+      //printf("idx = %u\n", idx);
+      //printf("table[idx].value = %s\n", table[idx].value);
       if(sscanf(table[idx].value, "%s", leakage_vector) != 1)
         fatal("invalid format for leakage_vector\n");
    } else {
@@ -153,8 +153,8 @@ void global_config_from_strs(global_config_t *config, str_pair *table, int size)
 
 
   if ((idx = get_str_index(table, size, "v")) >= 0) {
-      printf("idx = %u\n", idx);
-      printf("table[idx].value = %s\n", table[idx].value);
+      //printf("idx = %u\n", idx);
+      //printf("table[idx].value = %s\n", table[idx].value);
       if(sscanf(table[idx].value, "%s", volt_vector) != 1)
         fatal("invalid format for volt_vector\n");
    } else {
@@ -535,8 +535,8 @@ for (i = 0; i < length_v; ++i)
 
   // flp = read_flp(global_config.flp_file, FALSE);
   // LOKESH
-  printf("flp_file= %s\n", global_config.flp_file);
-  printf("do_detailed_3D= %d\n", do_detailed_3D);
+  //printf("flp_file= %s\n", global_config.flp_file);
+  //printf("do_detailed_3D= %d\n", do_detailed_3D);
 
   //BU_3D: added do_detailed_3D to alloc_RC_model. Detailed 3D modeling can only be used with grid-level modeling.
   /* allocate and initialize the RC model	*/
@@ -648,7 +648,6 @@ for (i = 0; i < length_v; ++i)
   vals = dvector(MAX_UNITS);
   vals_withLeak = dvector(MAX_UNITS);
   while ((num=read_vals(pin, vals)) != 0) {
-      printf("n = %d\n", n);
       if(num != n)
         fatal("invalid trace file format\n");
 

@@ -15,6 +15,8 @@ import time
 import argparse
 import configparser
 from collections import defaultdict
+import subprocess
+import shutil
 
 # Mock sim module to replace Sniper's simulation framework
 class MockSim:
@@ -247,14 +249,23 @@ class StandaloneMemTherm:
     
     def load_config(self, config_file):
         """Load configuration from file"""
-        config = configparser.ConfigParser()
-        config.read(config_file)
-        
-        # Load configuration into sim.config
-        for section in config.sections():
-            for key, value in config.items(section):
-                config_key = "{}/{}".format(section, key)
-                sim.config.config_data[config_key] = value
+        # Try to use ConfigManager if available, otherwise fall back to manual parsing
+        try:
+            from config_manager import ConfigManager
+            config_manager = ConfigManager(config_file)
+            # Load configuration into sim.config using the config manager
+            config_dict = config_manager.get_sim_config_dict()
+            sim.config.config_data.update(config_dict)
+        except ImportError:
+            # Fallback to manual parsing
+            config = configparser.ConfigParser()
+            config.read(config_file)
+            
+            # Load configuration into sim.config
+            for section in config.sections():
+                for key, value in config.items(section):
+                    config_key = "{}/{}".format(section, key)
+                    sim.config.config_data[config_key] = value
         
         # Set default values for required parameters
         defaults = {
@@ -395,7 +406,16 @@ class StandaloneMemTherm:
         os.system("echo copying files for first run")
         os.system("cp -r " + hotspot_floorplan_folder + " " + './hotspot')
         os.system("cp " + self.init_file_external_mem + " " + self.init_file)
-        self.hotspot_command = "{} -c {} -p {} -o {} -model_secondary 1 -model_type grid -steady_file {} -all_transient_file {} -grid_steady_file {} -steady_state_print_disable 1 -l 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, -type {} -sampling_intvl {} -grid_layer_file {} -detailed_3D on".format(
+        
+        # Original (non-optimized) command:
+        # self.hotspot_command = "{} -c {} -p {} -o {} -model_secondary 1 -model_type grid -steady_file {} -all_transient_file {} -grid_steady_file {} -steady_state_print_disable 1 -l 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, -type {} -sampling_intvl {} -grid_layer_file {} -detailed_3D on".format(
+        #     executable, hotspot_config_file, self.power_trace_file, self.temperature_trace_file,
+        #     self.steady_temp_file, self.all_transient_file, self.grid_steady_file,
+        #     self.type_of_stack, self.interval_sec, hotspot_layer_file
+        # )
+        
+        # Optimized command with performance improvements:
+        self.hotspot_command = "{} -c {} -p {} -o {} -model_secondary 1 -model_type grid -steady_file {} -all_transient_file {} -grid_steady_file {} -steady_state_print_disable 1 -l 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, -type {} -sampling_intvl {} -grid_layer_file {} -detailed_3D on -leakage_used 0".format(
             executable, hotspot_config_file, self.power_trace_file, self.temperature_trace_file,
             self.steady_temp_file, self.all_transient_file, self.grid_steady_file,
             self.type_of_stack, self.interval_sec, hotspot_layer_file
@@ -564,34 +584,41 @@ class StandaloneMemTherm:
             bank_mode_trace_string += "{:.2f}\t".format(leakage)
         bank_mode_trace_string += "\r\n"
         
-        # Write bank mode information to output directory
+        # Write bank mode information to output directory (fresh file each time)
         bank_mode_header = '\t'.join(["B_{}".format(i) for i in range(self.NUM_BANKS)])
         bank_mode_file = os.path.join('output', 'bank_mode.trace')
         with open(bank_mode_file, "w") as f:
             f.write("{}\n".format(bank_mode_header))
             f.write(bank_mode_trace_string)
-        f.close()
     
     def execute_hotspot(self):
-        """Execute hotspot thermal simulation"""
+        """Execute hotspot thermal simulation (optimized)"""
         cmd = self.hotspot_command
         if os.path.exists(self.init_file):
             cmd += ' -init_file ' + self.init_file
-        
-        print("Executing hotspot command: {}".format(cmd))
-        result = os.system(cmd)
-        
-        if result == 0:
-            print("Hotspot simulation completed successfully")
-            # Copy transient file to init file for next iteration
-            if os.path.exists(self.all_transient_file):
-                os.system("cp {} {}".format(self.all_transient_file, self.init_file))
-        else:
-            print("Hotspot simulation failed with exit code {}".format(result))
+        # Old (non-optimized) version:
+        # result = os.system(cmd)
+        # if result == 0:
+        #     if os.path.exists(self.all_transient_file):
+        #         os.system("cp {} {}".format(self.all_transient_file, self.init_file))
+        # else:
+        #     print("Hotspot simulation failed with exit code {}".format(result))
+        try:
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Hotspot simulation failed with exit code {result.returncode}")
+                print(f"stdout: {result.stdout}")
+                print(f"stderr: {result.stderr}")
+            else:
+                # Copy transient file to init file for next iteration (optimized)
+                if os.path.exists(self.all_transient_file):
+                    shutil.copy2(self.all_transient_file, self.init_file)
+        except Exception as e:
+            print(f"Exception while running Hotspot: {e}")
     
-    def step(self, time_delta_ns):
+    def step(self, time_delta_ns, no_feedback, step, steps):
         """Execute one simulation step"""
-        print("Simulation step at time {} ns (delta: {} ns)".format(self.current_time, time_delta_ns))
+        #print("Simulation step at time {} ns (delta: {} ns)".format(self.current_time, time_delta_ns))
         
         # Update access pattern if provider supports it
         if hasattr(self.access_provider, 'update_pattern'):
@@ -608,21 +635,25 @@ class StandaloneMemTherm:
         self.write_power_trace(power_trace)
 
         integration_power_file = os.path.join('output', 'integration_power.trace')
-        if (os.path.exists(integration_power_file)):
-            with open(integration_power_file, 'r') as f:
-                for i, line in enumerate(f):
-                    #print(f"line {i+1}: {line.strip()}")
-                    print(f"line {i+1}: {line}")
-            f.close()
+        # if (os.path.exists(integration_power_file)):
+        #     with open(integration_power_file, 'r') as f:
+        #         for i, line in enumerate(f):
+        #             #print(f"line {i+1}: {line.strip()}")
+        #             print(f"line {i+1}: {line}")
+        #     f.close()
         # Execute hotspot
-        self.execute_hotspot()
+        if not no_feedback:
+            self.execute_hotspot()
+        else:
+            if step == steps - 1:
+                self.execute_hotspot()
         
         # Update time
         self.current_time += time_delta_ns
         
-        print("Step completed")
+        #print("Step completed")
     
-    def run(self, duration_ns):
+    def run(self, duration_ns, no_feedback=False):
         """Run the thermal simulation for the specified duration"""
         print("Starting thermal simulation for {} ns".format(duration_ns))
         print("Sampling interval: {} ns".format(self.sampling_interval))
@@ -632,7 +663,7 @@ class StandaloneMemTherm:
         
         for step in range(steps):
             print("\n--- Step {} of {} ---".format(step + 1, steps))
-            self.step(self.sampling_interval)
+            self.step(self.sampling_interval, no_feedback, step, steps)
             
             # Small delay to make output readable
             # time.sleep(0.1)
@@ -671,110 +702,3 @@ class StandaloneEnergyStats:
     def periodic(self, time, time_delta):
         """Periodic update"""
         pass  # Mock implementation
-
-def create_sample_config():
-    """Create a sample configuration file"""
-    config_content = """[general]
-total_cores = 16
-
-[memory]
-bank_size = 67108864
-energy_per_read_access = 1.0
-energy_per_write_access = 1.0
-logic_core_power = 0.1
-energy_per_refresh_access = 100.0
-t_refi = 7.8
-no_refesh_commands_in_t_refw = 8
-banks_in_x = 4
-banks_in_y = 4
-banks_in_z = 8
-num_banks = 128
-cores_in_x = 4
-cores_in_y = 4
-cores_in_z = 1
-type_of_stack = 3D
-
-[hotspot]
-sampling_interval = 1000000
-tool_path = hotspot_tool
-config_path = .
-hotspot_config_file_mem = hotspot.config
-floorplan_folder = hotspot/floorplans
-layer_file_mem = hotspot/layers.config
-
-[hotspot/log_files_mem]
-power_trace_file = power.trace
-temperature_trace_file = temperature.trace
-init_file = init.temp
-steady_temp_file = steady.temp
-all_transient_file = all_transient.temp
-grid_steady_file = grid_steady.temp
-
-[hotspot/log_files]
-combined_temperature_trace_file = combined_temperature.trace
-combined_power_trace_file = combined_power.trace
-
-[scheduler/open/dram/dtm]
-dtm = off
-
-[perf_model/dram/lowpower]
-lpm_dynamic_power = 0.5
-lpm_leakage_power = 0.1
-
-[perf_model/core]
-min_frequency = 1.0
-max_frequency = 4.0
-frequency_step_size = 0.1
-
-[power]
-technology_node = 22
-vdd = 1.2
-vth = 0.3
-
-[core_thermal]
-enabled = true
-
-[reliability]
-enabled = false
-"""
-    
-    with open('sample_config.cfg', 'w') as f:
-        f.write(config_content)
-    f.close()
-    
-    print("Sample configuration file created: sample_config.cfg")
-
-def main():
-    """Main function"""
-    parser = argparse.ArgumentParser(description='Standalone thermal simulation')
-    parser.add_argument('--config', required=True, help='Configuration file')
-    parser.add_argument('--duration', type=int, default=10000000, help='Simulation duration in nanoseconds')
-    parser.add_argument('--create-sample-config', action='store_true', help='Create a sample configuration file')
-    
-    args = parser.parse_args()
-    
-    if args.create_sample_config:
-        create_sample_config()
-        return
-    
-    if not os.path.exists(args.config):
-        print("Error: Configuration file '{}' not found".format(args.config))
-        return
-    
-    # Create access provider with sample data
-    access_provider = BankAccessProvider(128)  # 128 banks
-    
-    # Set some sample access data
-    read_accesses = [10 + i % 20 for i in range(128)]  # Varying read accesses
-    write_accesses = [5 + i % 10 for i in range(128)]  # Varying write accesses
-    bank_modes = [1 if i % 10 != 0 else 0 for i in range(128)]  # Some banks in low power
-    
-    access_provider.set_access_data(read_accesses, write_accesses, 
-                                   read_accesses, write_accesses, bank_modes)
-    
-    # Create and run thermal simulation
-    thermal_sim = StandaloneMemTherm(args.config, access_provider)
-    thermal_sim.run(args.duration)
-
-if __name__ == "__main__":
-    main() 

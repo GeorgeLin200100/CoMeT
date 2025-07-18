@@ -263,13 +263,14 @@ class Dsc2AccessConverter:
             print(f"DEBUG:   final bank_accesses = {bank_accesses}")
         return bank_accesses
 
-    def _process_operations_to_timeline(self, operations):
+    def _process_operations_to_timeline(self, operations, global_max_lanewidth):
         """Process operations and return millisecond-by-millisecond access pattern."""
-        total_banks = max(max(banks) for banks in self.bank_mapping.values()) + 1
+        total_banks = self.total_banks
         
         if self.debug:
             print(f"DEBUG: process_operations_to_timeline - {len(operations)} operations")
             print(f"DEBUG:   total_banks = {total_banks}")
+            print(f"DEBUG:   global_max_lanewidth = {global_max_lanewidth} B")
         
         # Process each operation to get its duration and bank accesses
         operation_timeline = []
@@ -330,11 +331,9 @@ class Dsc2AccessConverter:
         # Find the maximum duration among all operations in this step
         max_duration = max(op['duration'] for op in operation_timeline) if operation_timeline else 1
         
-        # Find the maximum lanewidth among all operations in this step
-        max_lanewidth = max(op['lanewidth'] for op in operation_timeline) if operation_timeline else 1
         if self.debug:
             print(f"DEBUG: max_duration = {max_duration}ms")
-            print(f"DEBUG: max_lanewidth = {max_lanewidth} B")
+            print(f"DEBUG: using global_max_lanewidth = {global_max_lanewidth} B")
         
         # Generate millisecond-by-millisecond access pattern
         timeline = []
@@ -375,11 +374,11 @@ class Dsc2AccessConverter:
                                 bank_access_count = op['bank_accesses'].get(bank, 0)
                                 if bank_access_count > 0:
                                     if op['type'] == 'read':
-                                        read_accesses[bank] += int(bank_access_count * op['lanewidth'] / max_lanewidth) #scale the access count by the lanewidth
+                                        read_accesses[bank] += int(bank_access_count * op['lanewidth'] / global_max_lanewidth) #scale the access count by the lanewidth
                                         if self.debug:
                                             print(f"DEBUG:       adding {int(bank_access_count)} read accesses to bank {bank}")
                                     elif op['type'] == 'write':
-                                        write_accesses[bank] += int(bank_access_count * op['lanewidth'] / max_lanewidth) #scale the access count by the lanewidth
+                                        write_accesses[bank] += int(bank_access_count * op['lanewidth'] / global_max_lanewidth) #scale the access count by the lanewidth
                                         if self.debug:
                                             print(f"DEBUG:       adding {int(bank_access_count)} write accesses to bank {bank}")
                             has_prs_1ms_op.append(op)
@@ -434,13 +433,15 @@ class Dsc2AccessConverter:
                         # Add all active banks to appropriate access type
                         for active_bank, active_accesses in active_banks:
                             if op['type'] == 'read':
-                                read_accesses[active_bank] += int(active_accesses * op['lanewidth'] / max_lanewidth) #scale the access count by the lanewidth
+                                read_accesses[active_bank] += int(active_accesses * op['lanewidth'] / global_max_lanewidth) #scale the access count by the lanewidth
                                 if self.debug:
-                                    print(f"DEBUG:       adding {int(active_accesses)} read accesses to bank {active_bank}")
+                                    print(f"DEBUG:       op['lanewidth'] = {op['lanewidth']}")
+                                    print(f"DEBUG:       global_max_lanewidth = {global_max_lanewidth}")
+                                    print(f"DEBUG:       adding {int(active_accesses * op['lanewidth'] / global_max_lanewidth)} read accesses to bank {active_bank}")
                             elif op['type'] == 'write':
-                                write_accesses[active_bank] += int(active_accesses * op['lanewidth'] / max_lanewidth) #scale the access count by the lanewidth
+                                write_accesses[active_bank] += int(active_accesses * op['lanewidth'] / global_max_lanewidth) #scale the access count by the lanewidth
                                 if self.debug:
-                                    print(f"DEBUG:       adding {int(active_accesses)} write accesses to bank {active_bank}")
+                                    print(f"DEBUG:       adding {int(active_accesses * op['lanewidth'] / global_max_lanewidth)} write accesses to bank {active_bank}")
             
             if self.debug:
                 print(f"DEBUG:   ms {ms} result: read={read_accesses}, write={write_accesses}")
@@ -517,8 +518,28 @@ class Dsc2AccessConverter:
         for step_num, (read_accesses, write_accesses) in steps_data:
             row = [str(step_num)] + [str(int(x)) for x in read_accesses] + [str(int(x)) for x in write_accesses]
             rows.append(row)
+        
+        # Ensure all rows have the same number of columns as headers
+        expected_cols = len(headers)
+        for i, row in enumerate(rows):
+            if len(row) != expected_cols:
+                print(f"Warning: Row {i} has {len(row)} columns, expected {expected_cols}")
+                # Pad or truncate row to match header length
+                if len(row) < expected_cols:
+                    row.extend(['0'] * (expected_cols - len(row)))
+                else:
+                    row = row[:expected_cols]
+                rows[i] = row
+        
         # Calculate max width for each column
-        col_widths = [max(len(headers[i]), max(len(row[i]) for row in rows)) for i in range(len(headers))]
+        col_widths = []
+        for i in range(len(headers)):
+            max_width = len(headers[i])
+            for row in rows:
+                if i < len(row):
+                    max_width = max(max_width, len(row[i]))
+            col_widths.append(max_width)
+        
         # Write to file
         with open(filename, 'w') as f:
             # Write header
@@ -552,6 +573,22 @@ class Dsc2AccessConverter:
         if self.debug:
             print(f"DEBUG: parsed {len(steps)} steps from input file")
         
+        # First pass: collect all lanewidths to find global maximum
+        all_lanewidths = []
+        for step_num, operations in steps:
+            for operation in operations:
+                parts = operation.split('@')
+                if len(parts) == 5:
+                    try:
+                        lanewidth = float(parts[4])
+                        all_lanewidths.append(lanewidth)
+                    except ValueError:
+                        continue
+        
+        global_max_lanewidth = max(all_lanewidths) if all_lanewidths else 1
+        if self.debug:
+            print(f"DEBUG: global_max_lanewidth = {global_max_lanewidth} B")
+        
         # Process each step
         steps_data = []
         current_ms = 0
@@ -560,7 +597,7 @@ class Dsc2AccessConverter:
             if self.debug:
                 print(f"DEBUG: processing step {step_num} with {len(operations)} operations")
             # Use the new function to process operations and generate timeline
-            timeline = self._process_operations_to_timeline(operations)
+            timeline = self._process_operations_to_timeline(operations, global_max_lanewidth)
             
             # Convert timeline to steps_data format
             for ms, (read_accesses, write_accesses) in enumerate(timeline):
