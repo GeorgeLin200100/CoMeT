@@ -187,6 +187,8 @@ class BankAccessProvider:
         self.read_accesses_lowpower = [0] * num_banks
         self.write_accesses_lowpower = [0] * num_banks
         self.bank_modes = [1] * num_banks  # 1 = normal power, 0 = low power
+        self.read_lanewidths = [0] * num_banks  # lanewidth for each bank's read accesses
+        self.write_lanewidths = [0] * num_banks  # lanewidth for each bank's write accesses
     
     def get_read_accesses(self):
         """Get read access counts for all banks"""
@@ -208,9 +210,17 @@ class BankAccessProvider:
         """Get bank power modes for all banks"""
         return self.bank_modes.copy()
     
+    def get_read_lanewidths(self):
+        """Get lanewidths for read accesses for all banks"""
+        return self.read_lanewidths.copy()
+    
+    def get_write_lanewidths(self):
+        """Get lanewidths for write accesses for all banks"""
+        return self.write_lanewidths.copy()
+    
     def set_access_data(self, read_accesses, write_accesses, 
                        read_accesses_lowpower=None, write_accesses_lowpower=None,
-                       bank_modes=None):
+                       bank_modes=None, read_lanewidths=None, write_lanewidths=None):
         """Set access data for all banks"""
         self.read_accesses = read_accesses[:self.num_banks]
         self.write_accesses = write_accesses[:self.num_banks]
@@ -221,6 +231,10 @@ class BankAccessProvider:
             self.write_accesses_lowpower = write_accesses_lowpower[:self.num_banks]
         if bank_modes is not None:
             self.bank_modes = bank_modes[:self.num_banks]
+        if read_lanewidths is not None:
+            self.read_lanewidths = read_lanewidths[:self.num_banks]
+        if write_lanewidths is not None:
+            self.write_lanewidths = write_lanewidths[:self.num_banks]
 
 # Modified memTherm class for standalone operation
 class StandaloneMemTherm:
@@ -475,15 +489,18 @@ class StandaloneMemTherm:
         f.close()
     
     def get_access_rates(self):
-        """Get access rates from the access provider"""
+        """Get access rates and lanewidths from the access provider"""
         if self.access_provider:
             return (self.access_provider.get_read_accesses(),
                    self.access_provider.get_write_accesses(),
                    self.access_provider.get_read_accesses_lowpower(),
-                   self.access_provider.get_write_accesses_lowpower())
+                   self.access_provider.get_write_accesses_lowpower(),
+                   self.access_provider.get_read_lanewidths(),
+                   self.access_provider.get_write_lanewidths())
         else:
-            # Return zero access rates if no provider
+            # Return zero access rates and default lanewidths if no provider
             return ([0] * self.NUM_BANKS, [0] * self.NUM_BANKS, 
+                   [0] * self.NUM_BANKS, [0] * self.NUM_BANKS,
                    [0] * self.NUM_BANKS, [0] * self.NUM_BANKS)
     
     def get_bank_modes(self):
@@ -495,7 +512,7 @@ class StandaloneMemTherm:
     
     def calc_power_trace(self):
         """Calculate power trace"""
-        accesses_read, accesses_write, accesses_read_lowpower, accesses_write_lowpower = self.get_access_rates()
+        accesses_read, accesses_write, accesses_read_lowpower, accesses_write_lowpower, read_lanewidths, write_lanewidths = self.get_access_rates()
         
         # Calculate refresh power
         avg_no_refresh_intervals_in_timestep = self.timestep / self.t_refi
@@ -506,17 +523,26 @@ class StandaloneMemTherm:
         # Calculate bank power
         bank_power_trace = [0] * self.NUM_BANKS
         for bank in range(self.NUM_BANKS):
+            # Calculate energy per access based on lanewidth
+            # Default to 1 if lanewidth is 0 (no access)
+            read_lanewidth = max(1, read_lanewidths[bank]) if read_lanewidths[bank] > 0 else 1
+            write_lanewidth = max(1, write_lanewidths[bank]) if write_lanewidths[bank] > 0 else 1
+            
+            # Energy per access is proportional to lanewidth (bits transferred)
+            energy_per_read_access_actual = self.energy_per_read_access * (read_lanewidth * 8)  # Convert bytes to bits
+            energy_per_write_access_actual = self.energy_per_write_access * (write_lanewidth * 8)  # Convert bytes to bits
+            
             if self.mem_dtm != 'off':
-                normal_power_access = (accesses_read[bank] * self.energy_per_read_access + 
-                                     accesses_write[bank] * self.energy_per_write_access)
-                low_power_access = ((accesses_read_lowpower[bank] * self.energy_per_read_access + 
-                                   accesses_write_lowpower[bank] * self.energy_per_write_access) * 
+                normal_power_access = (accesses_read[bank] * energy_per_read_access_actual + 
+                                     accesses_write[bank] * energy_per_write_access_actual)
+                low_power_access = ((accesses_read_lowpower[bank] * energy_per_read_access_actual + 
+                                   accesses_write_lowpower[bank] * energy_per_write_access_actual) * 
                                   self.lpm_dynamic_power)
                 bank_power_trace[bank] = ((normal_power_access + low_power_access) / 
                                         (self.timestep * 1000) + self.bank_static_power + avg_refresh_power)
             else:
-                bank_power_trace[bank] = ((accesses_read[bank] * self.energy_per_read_access + 
-                                         accesses_write[bank] * self.energy_per_write_access) / 
+                bank_power_trace[bank] = ((accesses_read[bank] * energy_per_read_access_actual + 
+                                         accesses_write[bank] * energy_per_write_access_actual) / 
                                         (self.timestep * 1000) + self.bank_static_power + avg_refresh_power)
             # Print each element's value in the above one line
             # print(

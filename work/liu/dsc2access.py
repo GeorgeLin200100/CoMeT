@@ -190,7 +190,7 @@ class Dsc2AccessConverter:
         
         return duration
 
-    def _distribute_access_to_banks(self, access_type, bank_group, access_amount_mb, lanewidth, starting_stack=None):
+    def _distribute_access_to_banks(self, access_type, bank_group, access_amount_mb, lanewidth, starting_stack=None, starting_bank=0):
         """Distribute access amount across banks in the bank group sequentially, starting from specified stack."""
         banks_in_group = self.bank_mapping[bank_group]
         access_amount_bytes = access_amount_mb * 1024 * 1024  # Convert MB to bytes
@@ -227,7 +227,7 @@ class Dsc2AccessConverter:
         bank_accesses = {bank: 0 for bank in banks_in_group}
         
         remaining_amount = access_amount_bytes
-        current_bank_index = 0
+        current_bank_index = starting_bank  # Start from the specified bank within the group
         
         # Sequential access: fill one bank completely before moving to the next
         while remaining_amount > 0 and current_bank_index < len(banks_in_group):
@@ -259,6 +259,54 @@ class Dsc2AccessConverter:
                     print(f"DEBUG:     accesses = int({bank_capacity} / {lanewidth}) = {accesses}")
                     print(f"DEBUG:     remaining_amount = {remaining_amount} bytes")
         
+        # if still remaining amount, map to the next stack until all remaining amount is mapped
+        # If there is still remaining_amount after filling all banks in the current stack,
+        # continue mapping to the next stack(s) in a round-robin fashion until all remaining_amount is mapped.
+        # This only applies if stack_height > 1 (i.e., multiple stacks exist).
+        next_stack = (starting_stack + 1) % self.stack_height if self.stack_height > 1 else starting_stack
+        while remaining_amount > 0 and self.stack_height > 1:
+            # Get banks in the same group for the next stack
+            stack_start_bank = next_stack * self.total_banks // self.stack_height # This line was incorrect, should be self.bank_per_row * self.bank_per_col
+            stack_end_bank = stack_start_bank + self.total_banks // self.stack_height # This line was incorrect, should be self.bank_per_row * self.bank_per_col
+            banks_in_next_stack = [
+                bank for bank in self.bank_mapping[bank_group]
+                if stack_start_bank <= bank < stack_end_bank
+            ]
+            if not banks_in_next_stack:
+                # No banks in this stack for this group, skip to next stack
+                next_stack = (next_stack + 1) % self.stack_height
+                # If we've looped all stacks and found nothing, break to avoid infinite loop
+                if next_stack == starting_stack:
+                    break
+                continue
+            # Fill banks in the next stack sequentially
+            for bank in banks_in_next_stack:
+                bank_capacity = self.bank_size * 1024 * 1024  # MB to bytes
+                already_accessed = bank_accesses.get(bank, 0)
+                # Only fill if not already filled in this round
+                if already_accessed == 0:
+                    if remaining_amount <= bank_capacity:
+                        accesses = int(remaining_amount / lanewidth)
+                        bank_accesses[bank] = accesses
+                        remaining_amount = 0
+                        if self.debug:
+                            print(f"DEBUG:     (extra stack) bank {bank} can handle remaining amount")
+                            print(f"DEBUG:     accesses = int({remaining_amount} / {lanewidth}) = {accesses}")
+                        break  # Done mapping
+                    else:
+                        accesses = int(bank_capacity / lanewidth)
+                        bank_accesses[bank] = accesses
+                        remaining_amount -= bank_capacity
+                        if self.debug:
+                            print(f"DEBUG:     (extra stack) bank {bank} fully utilized")
+                            print(f"DEBUG:     accesses = int({bank_capacity} / {lanewidth}) = {accesses}")
+                            print(f"DEBUG:     remaining_amount = {remaining_amount} bytes")
+            # Move to next stack
+            next_stack = (next_stack + 1) % self.stack_height
+            # # If we've looped all stacks, break to avoid infinite loop
+            if next_stack == starting_stack:
+                break
+
         if self.debug:
             print(f"DEBUG:   final bank_accesses = {bank_accesses}")
         return bank_accesses
@@ -276,17 +324,28 @@ class Dsc2AccessConverter:
         operation_timeline = []
         has_prs_1ms_op = []
         for operation in operations:
-            # Parse operation: read@bank_group@starting_stack@access_amount@lanewidth
+            # Parse operation: read@bank_group@starting_stack@starting_bank@access_amount@lanewidth
             parts = operation.split('@')
-            if len(parts) != 5:
+            if len(parts) < 5:
                 print(f"Warning: Invalid operation format: {operation}")
                 continue
-                
-            access_type, bank_group_str, starting_stack_str, access_amount_str, lanewidth_str = parts
+            
+            # Handle both old format (5 parts) and new format (6 parts)
+            if len(parts) == 5:
+                # Old format: read@bank_group@starting_stack@access_amount@lanewidth
+                access_type, bank_group_str, starting_stack_str, access_amount_str, lanewidth_str = parts
+                starting_bank_str = "0"  # Default to first bank in group
+            elif len(parts) == 6:
+                # New format: read@bank_group@starting_stack@starting_bank@access_amount@lanewidth
+                access_type, bank_group_str, starting_stack_str, starting_bank_str, access_amount_str, lanewidth_str = parts
+            else:
+                print(f"Warning: Invalid operation format: {operation}")
+                continue
             
             try:
                 bank_group = int(bank_group_str)
                 starting_stack = int(starting_stack_str)
+                starting_bank = int(starting_bank_str)
                 access_amount = float(access_amount_str)
                 op_lanewidth = float(lanewidth_str)
             except ValueError:
@@ -301,10 +360,16 @@ class Dsc2AccessConverter:
                 print(f"Warning: Invalid starting stack {starting_stack}")
                 continue
             
+            # Validate starting_bank within the bank group
+            banks_in_group = self.bank_mapping[bank_group]
+            if starting_bank < 0 or starting_bank >= len(banks_in_group):
+                print(f"Warning: Invalid starting bank {starting_bank} for bank group {bank_group} (group has {len(banks_in_group)} banks)")
+                continue
+            
             if self.debug:
                 print(f"DEBUG: processing operation: {operation}")
                 print(f"DEBUG:   access_type = {access_type}, bank_group = {bank_group}")
-                print(f"DEBUG:   starting_stack = {starting_stack}")
+                print(f"DEBUG:   starting_stack = {starting_stack}, starting_bank = {starting_bank}")
                 print(f"DEBUG:   access_amount = {access_amount} MB, lanewidth = {op_lanewidth} B")
             
             # Calculate duration of this operation
@@ -312,7 +377,7 @@ class Dsc2AccessConverter:
             
             # Distribute access to banks
             bank_accesses = self._distribute_access_to_banks(
-                access_type, bank_group, access_amount, op_lanewidth, starting_stack
+                access_type, bank_group, access_amount, op_lanewidth, starting_stack, starting_bank
             )
             
             # Add to timeline
@@ -322,6 +387,7 @@ class Dsc2AccessConverter:
                 'bank_accesses': bank_accesses,
                 'bank_group': bank_group,
                 'starting_stack': starting_stack,
+                'starting_bank': starting_bank,
                 'lanewidth': op_lanewidth
             })
             
@@ -340,6 +406,8 @@ class Dsc2AccessConverter:
         for ms in range(max_duration):
             read_accesses = [0] * total_banks
             write_accesses = [0] * total_banks
+            read_lanewidths = [0] * total_banks  # Track lanewidth for each bank's read accesses
+            write_lanewidths = [0] * total_banks  # Track lanewidth for each bank's write accesses
             
             if self.debug:
                 print(f"DEBUG: processing millisecond {ms}")
@@ -375,12 +443,16 @@ class Dsc2AccessConverter:
                                 if bank_access_count > 0:
                                     if op['type'] == 'read':
                                         read_accesses[bank] += int(bank_access_count * op['lanewidth'] / global_max_lanewidth) #scale the access count by the lanewidth
+                                        read_lanewidths[bank] = op['lanewidth']  # Set lanewidth for this bank
                                         if self.debug:
-                                            print(f"DEBUG:       adding {int(bank_access_count)} read accesses to bank {bank}")
+                                            print(f"DEBUG:       adding {int(bank_access_count)} read access to bank {bank}, current read_accesses = {read_accesses[bank]}")
+                                            print(f"DEBUG:       op['lanewidth'] = {op['lanewidth']}")
+                                            print(f"DEBUG:       global_max_lanewidth = {global_max_lanewidth}")
                                     elif op['type'] == 'write':
                                         write_accesses[bank] += int(bank_access_count * op['lanewidth'] / global_max_lanewidth) #scale the access count by the lanewidth
+                                        write_lanewidths[bank] = op['lanewidth']  # Set lanewidth for this bank
                                         if self.debug:
-                                            print(f"DEBUG:       adding {int(bank_access_count)} write accesses to bank {bank}")
+                                            print(f"DEBUG:       adding {int(bank_access_count)} write access to bank {bank}, current write_accesses = {write_accesses[bank]}")
                             has_prs_1ms_op.append(op)
                     else:
                         # Sequential access: determine which banks should be active at this millisecond
@@ -434,18 +506,21 @@ class Dsc2AccessConverter:
                         for active_bank, active_accesses in active_banks:
                             if op['type'] == 'read':
                                 read_accesses[active_bank] += int(active_accesses * op['lanewidth'] / global_max_lanewidth) #scale the access count by the lanewidth
+                                read_lanewidths[active_bank] = op['lanewidth']  # Set lanewidth for this bank
                                 if self.debug:
                                     print(f"DEBUG:       op['lanewidth'] = {op['lanewidth']}")
                                     print(f"DEBUG:       global_max_lanewidth = {global_max_lanewidth}")
-                                    print(f"DEBUG:       adding {int(active_accesses * op['lanewidth'] / global_max_lanewidth)} read accesses to bank {active_bank}")
+                                    print(f"DEBUG:       adding {int(active_accesses * op['lanewidth'] / global_max_lanewidth)} read accesses to bank {active_bank}, current read_accesses = {read_accesses[active_bank]}")
                             elif op['type'] == 'write':
                                 write_accesses[active_bank] += int(active_accesses * op['lanewidth'] / global_max_lanewidth) #scale the access count by the lanewidth
+                                write_lanewidths[active_bank] = op['lanewidth']  # Set lanewidth for this bank
                                 if self.debug:
-                                    print(f"DEBUG:       adding {int(active_accesses * op['lanewidth'] / global_max_lanewidth)} write accesses to bank {active_bank}")
+                                    print(f"DEBUG:       adding {int(active_accesses * op['lanewidth'] / global_max_lanewidth)} write accesses to bank {active_bank}, current write_accesses = {write_accesses[active_bank]}")
             
             if self.debug:
                 print(f"DEBUG:   ms {ms} result: read={read_accesses}, write={write_accesses}")
-            timeline.append((read_accesses, write_accesses))
+                print(f"DEBUG:   ms {ms} lanewidths: read={read_lanewidths}, write={write_lanewidths}")
+            timeline.append((read_accesses, write_accesses, read_lanewidths, write_lanewidths))
         
         if self.debug:
             print(f"DEBUG: generated {len(timeline)} millisecond entries")
@@ -512,11 +587,11 @@ class Dsc2AccessConverter:
 
     def write_output_table(self, filename, steps_data):
         # Prepare headers
-        headers = ['step'] + [f'read_{i}' for i in range(self.total_banks)] + [f'write_{i}' for i in range(self.total_banks)]
+        headers = ['step'] + [f'read_{i}' for i in range(self.total_banks)] + [f'write_{i}' for i in range(self.total_banks)] + [f'read_lw_{i}' for i in range(self.total_banks)] + [f'write_lw_{i}' for i in range(self.total_banks)]
         # Gather all rows as strings
         rows = []
-        for step_num, (read_accesses, write_accesses) in steps_data:
-            row = [str(step_num)] + [str(int(x)) for x in read_accesses] + [str(int(x)) for x in write_accesses]
+        for step_num, (read_accesses, write_accesses, read_lanewidths, write_lanewidths) in steps_data:
+            row = [str(step_num)] + [str(int(x)) for x in read_accesses] + [str(int(x)) for x in write_accesses] + [str(int(x)) for x in read_lanewidths] + [str(int(x)) for x in write_lanewidths]
             rows.append(row)
         
         # Ensure all rows have the same number of columns as headers
@@ -548,6 +623,141 @@ class Dsc2AccessConverter:
             for row in rows:
                 f.write('  '.join(row[i].rjust(col_widths[i]) for i in range(len(row))) + '\n')
 
+    def preprocess_description_file(self, input_file, output_file, split_on_total_capacity=True, split_on_stack_capacity=True):
+        """
+        Preprocess description file by splitting operations that exceed capacity.
+        
+        Args:
+            input_file (str): Path to input description file
+            output_file (str): Path to output preprocessed description file
+            split_on_total_capacity (bool): Split when access exceeds total bank group capacity
+            split_on_stack_capacity (bool): Split when access exceeds single stack capacity
+        """
+        if self.debug:
+            print(f"DEBUG: Preprocessing description file")
+            print(f"DEBUG:   input_file = {input_file}")
+            print(f"DEBUG:   output_file = {output_file}")
+            print(f"DEBUG:   split_on_total_capacity = {split_on_total_capacity}")
+            print(f"DEBUG:   split_on_stack_capacity = {split_on_stack_capacity}")
+        
+        # Calculate capacities
+        total_bank_group_capacity = self.bank_size * len(self.bank_mapping[0])  # Assuming all groups have same capacity
+        banks_per_stack = self.total_banks // self.stack_height
+        single_stack_capacity = self.bank_size * (len(self.bank_mapping[0]) // self.stack_height)
+        
+        if self.debug:
+            print(f"DEBUG:   total_bank_group_capacity = {total_bank_group_capacity} MB")
+            print(f"DEBUG:   single_stack_capacity = {single_stack_capacity} MB")
+        
+        # Parse input file
+        steps = self.parse_input_file(input_file)
+        
+        # Process each step
+        processed_steps = []
+        current_step_num = 0
+        
+        for step_num, operations in steps:
+            if self.debug:
+                print(f"DEBUG: Processing step {step_num} with {len(operations)} operations")
+            
+            # Process operations in this step
+            processed_operations = []
+            extra_steps = []  # Operations that need to be moved to next step
+            
+            for operation in operations:
+                parts = operation.split('@')
+                if len(parts) < 5:
+                    processed_operations.append(operation)
+                    continue
+                
+                # Handle both old format (5 parts) and new format (6 parts)
+                if len(parts) == 5:
+                    # Old format: read@bank_group@starting_stack@access_amount@lanewidth
+                    access_type, bank_group_str, starting_stack_str, access_amount_str, lanewidth_str = parts
+                    starting_bank_str = "0"  # Default to first bank in group
+                elif len(parts) == 6:
+                    # New format: read@bank_group@starting_stack@starting_bank@access_amount@lanewidth
+                    access_type, bank_group_str, starting_stack_str, starting_bank_str, access_amount_str, lanewidth_str = parts
+                else:
+                    processed_operations.append(operation)
+                    continue
+                
+                try:
+                    bank_group = int(bank_group_str)
+                    starting_stack = int(starting_stack_str)
+                    starting_bank = int(starting_bank_str)
+                    access_amount = float(access_amount_str)
+                    lanewidth = float(lanewidth_str)
+                except ValueError:
+                    processed_operations.append(operation)
+                    continue
+                
+                # Check if splitting is needed
+                should_split = False
+                split_reason = ""
+                
+                if split_on_total_capacity and access_amount > total_bank_group_capacity:
+                    should_split = True
+                    split_reason = f"exceeds total capacity ({access_amount} > {total_bank_group_capacity})"
+                
+                if split_on_stack_capacity and access_amount > single_stack_capacity:
+                    should_split = True
+                    split_reason = f"exceeds stack capacity ({access_amount} > {single_stack_capacity})"
+                
+                if should_split and self.debug:
+                    print(f"DEBUG:   Operation {operation} needs splitting: {split_reason}")
+                    print(f"DEBUG:     Original: {access_type}@{bank_group}@{starting_stack}@{starting_bank}@{access_amount}@{lanewidth}")
+                
+                if should_split:
+                    # Calculate how many steps we need
+                    if split_on_total_capacity and access_amount > total_bank_group_capacity:
+                        num_steps_needed = int(access_amount / total_bank_group_capacity) + 1
+                        access_per_step = access_amount / num_steps_needed
+                    else:
+                        num_steps_needed = int(access_amount / single_stack_capacity) + 1
+                        access_per_step = access_amount / num_steps_needed
+                    
+                    if self.debug:
+                        print(f"DEBUG:     Splitting into {num_steps_needed} steps, {access_per_step:.2f} MB per step")
+                    
+                    # First operation goes to current step
+                    first_operation = f"{access_type}@{bank_group}@{starting_stack}@{starting_bank}@{access_per_step:.2f}@{lanewidth}"
+                    processed_operations.append(first_operation)
+                    
+                    # Remaining operations go to extra steps
+                    for i in range(1, num_steps_needed):
+                        extra_operation = f"{access_type}@{bank_group}@{starting_stack}@{starting_bank}@{access_per_step:.2f}@{lanewidth}"
+                        extra_steps.append(extra_operation)
+                else:
+                    processed_operations.append(operation)
+            
+            # Add current step
+            if processed_operations:
+                processed_steps.append((current_step_num, processed_operations))
+                current_step_num += 1
+            
+            # Add extra steps before the next original step
+            for extra_operation in extra_steps:
+                processed_steps.append((current_step_num, [extra_operation]))
+                current_step_num += 1
+        
+        # Write preprocessed file
+        with open(output_file, 'w') as f:
+            for step_num, operations in processed_steps:
+                if operations:
+                    # Write first operation with step number
+                    f.write(f"{step_num}\t{operations[0]}\n")
+                    # Write remaining operations without step number
+                    for operation in operations[1:]:
+                        f.write(f"\t{operation}\n")
+        
+        if self.debug:
+            print(f"DEBUG: Preprocessing completed")
+            print(f"DEBUG:   Original steps: {len(steps)}")
+            print(f"DEBUG:   Processed steps: {len(processed_steps)}")
+        
+        return processed_steps
+
     def convert_file(self, input_file, output_file):
         """
         Convert a description-level access pattern file to bank-level access pattern.
@@ -578,9 +788,17 @@ class Dsc2AccessConverter:
         for step_num, operations in steps:
             for operation in operations:
                 parts = operation.split('@')
-                if len(parts) == 5:
+                if len(parts) >= 5:
                     try:
-                        lanewidth = float(parts[4])
+                        # Handle both old format (5 parts) and new format (6 parts)
+                        if len(parts) == 5:
+                            # Old format: read@bank_group@starting_stack@access_amount@lanewidth
+                            lanewidth = float(parts[4])
+                        elif len(parts) == 6:
+                            # New format: read@bank_group@starting_stack@starting_bank@access_amount@lanewidth
+                            lanewidth = float(parts[5])
+                        else:
+                            continue
                         all_lanewidths.append(lanewidth)
                     except ValueError:
                         continue
@@ -600,8 +818,8 @@ class Dsc2AccessConverter:
             timeline = self._process_operations_to_timeline(operations, global_max_lanewidth)
             
             # Convert timeline to steps_data format
-            for ms, (read_accesses, write_accesses) in enumerate(timeline):
-                steps_data.append((current_ms + ms, (read_accesses, write_accesses)))
+            for ms, (read_accesses, write_accesses, read_lanewidths, write_lanewidths) in enumerate(timeline):
+                steps_data.append((current_ms + ms, (read_accesses, write_accesses, read_lanewidths, write_lanewidths)))
             
             # Update current_ms for next step
             current_ms += len(timeline)
@@ -636,6 +854,15 @@ def parse_arguments():
     parser.add_argument('--group-cols', type=int, help='Number of columns per group (auto-inferred if not specified)')
     parser.add_argument('--num-groups', type=int, help='Number of bank groups (auto-inferred if not specified)')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    
+    # Preprocessing options
+    parser.add_argument('--preprocess', action='store_true', help='Preprocess description file to split large operations')
+    parser.add_argument('--preprocessed-output', type=str, help='Output file for preprocessed description (default: input_file.preprocessed)')
+    parser.add_argument('--split-on-total-capacity', action='store_true', default=True, help='Split operations that exceed total bank group capacity')
+    parser.add_argument('--split-on-stack-capacity', action='store_true', default=True, help='Split operations that exceed single stack capacity')
+    parser.add_argument('--no-split-on-total-capacity', action='store_true', help='Disable splitting on total capacity')
+    parser.add_argument('--no-split-on-stack-capacity', action='store_true', help='Disable splitting on stack capacity')
+    
     return parser.parse_args()
 
 
@@ -671,10 +898,43 @@ def main():
         debug=args.debug
     )
     
+    # Handle preprocessing if requested
+    input_file = args.input_file
+    if args.preprocess:
+        # Determine preprocessing output file
+        if args.preprocessed_output:
+            preprocessed_file = args.preprocessed_output
+        else:
+            preprocessed_file = args.input_file + ".preprocessed"
+        
+        # Determine splitting options
+        split_on_total = args.split_on_total_capacity and not args.no_split_on_total_capacity
+        split_on_stack = args.split_on_stack_capacity and not args.no_split_on_stack_capacity
+        
+        if args.debug:
+            print(f"DEBUG: Preprocessing enabled")
+            print(f"DEBUG:   preprocessed_file = {preprocessed_file}")
+            print(f"DEBUG:   split_on_total = {split_on_total}")
+            print(f"DEBUG:   split_on_stack = {split_on_stack}")
+        
+        # Preprocess the file
+        try:
+            converter.preprocess_description_file(
+                args.input_file, 
+                preprocessed_file,
+                split_on_total_capacity=split_on_total,
+                split_on_stack_capacity=split_on_stack
+            )
+            print(f"Successfully preprocessed {args.input_file} to {preprocessed_file}")
+            input_file = preprocessed_file
+        except Exception as e:
+            print(f"Error during preprocessing: {e}")
+            sys.exit(1)
+    
     # Convert the file
     try:
-        converter.convert_file(args.input_file, args.output_file)
-        print(f"Successfully converted {args.input_file} to {args.output_file}")
+        converter.convert_file(input_file, args.output_file)
+        print(f"Successfully converted {input_file} to {args.output_file}")
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)

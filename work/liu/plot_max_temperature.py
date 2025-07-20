@@ -99,21 +99,152 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
             
             color_idx += 1
     
-    # Find and annotate significant peaks
-    if all_data and show_peaks:
-        # Find global maximum temperature to set threshold
+    # Find global maximum and minimum temperatures
+    if all_data:
         global_max = max(data['max_temps'].max() for data in all_data)
         global_min = min(data['max_temps'].min() for data in all_data)
         
+        print(f"\nGlobal Temperature Statistics:")
+        print(f"  Global max temperature: {global_max:.2f}°C")
+        print(f"  Global min temperature: {global_min:.2f}°C")
+        
+        # Handle peak detection or global max/min marking
+        if show_peaks:
+            # Define significant temperature threshold (e.g., 90% of global max)
+            temp_threshold = global_min + 0.3 * (global_max - global_min)
+            
+            print(f"  Temperature threshold for peaks: {temp_threshold:.2f}°C")
+            
+            # Find peaks for each dataset
+            for data in all_data:
+                time_points = data['time_points']
+                max_temps = data['max_temps']
+                folder_name = data['folder_name']
+                color = data['color']
+                
+                # Find peaks using scipy if available, otherwise use simple method
+                try:
+                    from scipy.signal import find_peaks
+                    # Find peaks above threshold
+                    peaks, _ = find_peaks(max_temps, height=temp_threshold, distance=10)
+                except ImportError:
+                    # Simple peak detection
+                    peaks = []
+                    for i in range(1, len(max_temps) - 1):
+                        if (max_temps[i] > temp_threshold and 
+                            max_temps[i] > max_temps[i-1] and 
+                            max_temps[i] > max_temps[i+1]):
+                            peaks.append(i)
+                
+                # Store peak data for annotation after plot setup
+                for peak_idx in peaks:
+                    peak_time = time_points[peak_idx]
+                    peak_temp = max_temps[peak_idx]
+                    print(f"  {folder_name}: Peak at {peak_time}ms, Temperature: {peak_temp:.2f}°C")
+        
+        else:
+            # Mark global max and min when peaks are disabled
+            print(f"\nMarking Global Max and Min:")
+            # Note: Actual annotation will be done after plot setup for proper bounds checking
+    
+    plt.xlabel('Time (ms)', fontsize=14, weight='bold')
+    plt.ylabel('Maximum Temperature (°C)', fontsize=14, weight='bold')
+    if show_peaks:
+        plt.title(f'Maximum Temperature Comparison\n(Peaks marked)\n{output_file}', fontsize=16, weight='bold', pad=20)
+    else:
+        plt.title(f'Maximum Temperature Comparison\n{output_file}', fontsize=16, weight='bold', pad=20)
+    plt.legend(fontsize=12, framealpha=0.9, fancybox=True, shadow=True)
+    plt.grid(True, alpha=0.4, linestyle='--', linewidth=0.8)
+    
+    # Set reasonable y-axis limits and improve tick formatting
+    #plt.ylim(bottom=45, top=65)  # Start from 40°C for better visibility
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+    
+    # Add global max/min annotations after plot setup (for proper bounds checking)
+    if all_data and not show_peaks:
+        # Find which dataset contains the global max and min
+        global_max_dataset = None
+        global_min_dataset = None
+        global_max_time = 0
+        global_min_time = 0
+        
+        for data in all_data:
+            max_idx = np.argmax(data['max_temps'])
+            min_idx = np.argmin(data['max_temps'])
+            
+            if data['max_temps'][max_idx] == global_max:
+                global_max_dataset = data
+                global_max_time = data['time_points'][max_idx]
+            
+            if data['max_temps'][min_idx] == global_min:
+                global_min_dataset = data
+                global_min_time = data['time_points'][min_idx]
+        
+        # Mark global maximum
+        if global_max_dataset:
+            # Calculate annotation position with bounds checking
+            x_pos = global_max_time
+            y_pos = global_max
+            
+            # Get current axis limits after plot setup
+            xlim = plt.xlim()
+            ylim = plt.ylim()
+            
+            # Adjust text position to stay within bounds
+            text_x = x_pos + (xlim[1] - xlim[0]) * 0.05  # 5% of x range
+            text_y = y_pos + (ylim[1] - ylim[0]) * 0.05  # 5% of y range
+            
+            # Adjust if text would go outside bounds
+            if text_x > xlim[1]:
+                text_x = x_pos - (xlim[1] - xlim[0]) * 0.05
+            if text_y > ylim[1]:
+                text_y = y_pos - (ylim[1] - ylim[0]) * 0.05
+            
+            plt.annotate(f'Global Max: {global_max:.2f}°C', 
+                       xy=(x_pos, y_pos),
+                       xytext=(text_x, text_y),
+                       arrowprops=dict(arrowstyle='->', color='red', alpha=0.8, lw=2),
+                       fontsize=12, color='red', weight='bold',
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.9, edgecolor='red'))
+            plt.plot(x_pos, y_pos, 'o', color='red', markersize=10, markeredgecolor='black', markeredgewidth=2)
+            print(f"  Global Max: {global_max:.2f}°C at {global_max_time}ms ({global_max_dataset['folder_name']})")
+        
+        # Mark global minimum
+        if global_min_dataset:
+            # Calculate annotation position with bounds checking
+            x_pos = global_min_time
+            y_pos = global_min
+            
+            # Get current axis limits after plot setup
+            xlim = plt.xlim()
+            ylim = plt.ylim()
+            
+            # Adjust text position to stay within bounds
+            text_x = x_pos + (xlim[1] - xlim[0]) * 0.05  # 5% of x range
+            text_y = y_pos - (ylim[1] - ylim[0]) * 0.05  # 5% of y range
+            
+            # Adjust if text would go outside bounds
+            if text_x > xlim[1]:
+                text_x = x_pos - (xlim[1] - xlim[0]) * 0.05
+            if text_y < ylim[0]:
+                text_y = y_pos + (ylim[1] - ylim[0]) * 0.05
+            
+            plt.annotate(f'Global Min: {global_min:.2f}°C', 
+                       xy=(x_pos, y_pos),
+                       xytext=(text_x, text_y),
+                       arrowprops=dict(arrowstyle='->', color='blue', alpha=0.8, lw=2),
+                       fontsize=12, color='blue', weight='bold',
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.9, edgecolor='blue'))
+            plt.plot(x_pos, y_pos, 'o', color='blue', markersize=10, markeredgecolor='black', markeredgewidth=2)
+            print(f"  Global Min: {global_min:.2f}°C at {global_min_time}ms ({global_min_dataset['folder_name']})")
+    
+    # Add peak annotations after plot setup (for proper bounds checking)
+    if all_data and show_peaks:
         # Define significant temperature threshold (e.g., 90% of global max)
         temp_threshold = global_min + 0.3 * (global_max - global_min)
         
-        print(f"\nPeak Detection:")
-        print(f"  Global max temperature: {global_max:.2f}°C")
-        print(f"  Global min temperature: {global_min:.2f}°C")
-        print(f"  Temperature threshold for peaks: {temp_threshold:.2f}°C")
-        
-        # Find peaks for each dataset
+        # Find and annotate peaks for each dataset
         for data in all_data:
             time_points = data['time_points']
             max_temps = data['max_temps']
@@ -139,32 +270,34 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
                 peak_time = time_points[peak_idx]
                 peak_temp = max_temps[peak_idx]
                 
+                # Calculate annotation position with bounds checking
+                x_pos = peak_time
+                y_pos = peak_temp
+                
+                # Get current axis limits after plot setup
+                xlim = plt.xlim()
+                ylim = plt.ylim()
+                
+                # Adjust text position to stay within bounds (use relative positioning)
+                text_x = x_pos + (xlim[1] - xlim[0]) * 0.03  # 3% of x range
+                text_y = y_pos + (ylim[1] - ylim[0]) * 0.03  # 3% of y range
+                
+                # Adjust if text would go outside bounds
+                if text_x > xlim[1]:
+                    text_x = x_pos - (xlim[1] - xlim[0]) * 0.03
+                if text_y > ylim[1]:
+                    text_y = y_pos - (ylim[1] - ylim[0]) * 0.03
+                
                 # Add annotation with temperature value
                 plt.annotate(f'{peak_temp:.2f}°C', 
-                           xy=(peak_time, peak_temp),
-                           xytext=(peak_time + 3, peak_temp + 1.5),
+                           xy=(x_pos, y_pos),
+                           xytext=(text_x, text_y),
                            arrowprops=dict(arrowstyle='->', color=color, alpha=0.8, lw=1.5),
                            fontsize=10, color=color, weight='bold',
                            bbox=dict(boxstyle="round,pad=0.2", facecolor='white', alpha=0.9, edgecolor=color))
                 
                 # Add a marker at the peak
-                plt.plot(peak_time, peak_temp, 'o', color=color, markersize=8, markeredgecolor='black', markeredgewidth=1.5)
-                
-                print(f"  {folder_name}: Peak at {peak_time}ms, Temperature: {peak_temp:.2f}°C")
-    
-    plt.xlabel('Time (ms)', fontsize=14, weight='bold')
-    plt.ylabel('Maximum Temperature (°C)', fontsize=14, weight='bold')
-    if show_peaks:
-        plt.title('Maximum Temperature Comparison Across Different Configurations\n(Peaks marked with temperature values)', fontsize=16, weight='bold', pad=20)
-    else:
-        plt.title('Maximum Temperature Comparison Across Different Configurations', fontsize=16, weight='bold', pad=20)
-    plt.legend(fontsize=12, framealpha=0.9, fancybox=True, shadow=True)
-    plt.grid(True, alpha=0.4, linestyle='--', linewidth=0.8)
-    
-    # Set reasonable y-axis limits and improve tick formatting
-    plt.ylim(bottom=45, top=65)  # Start from 40°C for better visibility
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
+                plt.plot(x_pos, y_pos, 'o', color=color, markersize=8, markeredgecolor='black', markeredgewidth=1.5)
     
     # Tight layout with minimal padding
     plt.tight_layout(pad=1.0)

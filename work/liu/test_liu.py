@@ -55,8 +55,8 @@ class FileAccessProvider(BankAccessProvider):
                     if not parts[0].isdigit():
                         continue
                     
-                    # Check if we have enough data: step + 64 reads + 64 writes = 129 columns
-                    expected_columns = 1 + 2 * self.num_banks
+                    # Check if we have enough data: step + 64 reads + 64 writes + 64 read_lw + 64 write_lw = 257 columns
+                    expected_columns = 1 + 4 * self.num_banks
                     if len(parts) < expected_columns:
                         print(f"Warning: Line {line_num} has insufficient data: {line}")
                         print(f"  Expected {expected_columns} columns, got {len(parts)}")
@@ -65,6 +65,8 @@ class FileAccessProvider(BankAccessProvider):
                     step = int(parts[0])
                     read_accesses = [int(x) for x in parts[1:1+self.num_banks]]
                     write_accesses = [int(x) for x in parts[1+self.num_banks:1+2*self.num_banks]]
+                    read_lanewidths = [int(x) for x in parts[1+2*self.num_banks:1+3*self.num_banks]]
+                    write_lanewidths = [int(x) for x in parts[1+3*self.num_banks:1+4*self.num_banks]]
                     
                     # Optional low power data (not present in current format)
                     low_read_accesses = None
@@ -82,6 +84,8 @@ class FileAccessProvider(BankAccessProvider):
                         'step': step,
                         'read_accesses': read_accesses,
                         'write_accesses': write_accesses,
+                        'read_lanewidths': read_lanewidths,
+                        'write_lanewidths': write_lanewidths,
                         'low_read_accesses': low_read_accesses,
                         'low_write_accesses': low_write_accesses,
                         'bank_modes': bank_modes
@@ -114,7 +118,9 @@ class FileAccessProvider(BankAccessProvider):
                 data['write_accesses'],
                 data['low_read_accesses'],
                 data['low_write_accesses'],
-                data['bank_modes']
+                data['bank_modes'],
+                data['read_lanewidths'],
+                data['write_lanewidths']
             )
             self.current_step += 1
             
@@ -202,6 +208,21 @@ def parse_arguments():
                        help='Number of times to repeat the access pattern (default: 1)')
     parser.add_argument('--no_feedback', '-nf', default=False,
                        help='Disable feedback loop, hotspot will only run once (default: False)')
+    
+    # Preprocessing options
+    parser.add_argument('--preprocess', action='store_true', 
+                       help='Preprocess description file to split large operations')
+    parser.add_argument('--preprocessed_output', type=str, 
+                       help='Output file for preprocessed description (default: input_file.preprocessed)')
+    parser.add_argument('--split_on_total_capacity', action='store_true', default=True,
+                       help='Split operations that exceed total bank group capacity')
+    parser.add_argument('--split_on_stack_capacity', action='store_true', default=True,
+                       help='Split operations that exceed single stack capacity')
+    parser.add_argument('--no_split_on_total_capacity', action='store_true',
+                       help='Disable splitting on total capacity')
+    parser.add_argument('--no_split_on_stack_capacity', action='store_true',
+                       help='Disable splitting on stack capacity')
+    
     return parser.parse_args()
 
 def main():
@@ -255,7 +276,42 @@ def main():
         num_groups=config_manager.num_groups,
         debug=False
     )
-    converter.convert_file(args.input_file, args.output_file)
+    
+    # Handle preprocessing if requested
+    input_file = args.input_file
+    if args.preprocess:
+        # Determine preprocessing output file
+        if args.preprocessed_output:
+            preprocessed_file = args.preprocessed_output
+        else:
+            preprocessed_file = args.input_file + ".preprocessed"
+        
+        # Determine splitting options
+        split_on_total = args.split_on_total_capacity and not args.no_split_on_total_capacity
+        split_on_stack = args.split_on_stack_capacity and not args.no_split_on_stack_capacity
+        
+        print(f"Preprocessing description file...")
+        print(f"  Input file: {args.input_file}")
+        print(f"  Preprocessed file: {preprocessed_file}")
+        print(f"  Split on total capacity: {split_on_total}")
+        print(f"  Split on stack capacity: {split_on_stack}")
+        
+        # Preprocess the file
+        try:
+            converter.preprocess_description_file(
+                args.input_file, 
+                preprocessed_file,
+                split_on_total_capacity=split_on_total,
+                split_on_stack_capacity=split_on_stack
+            )
+            print(f"Successfully preprocessed {args.input_file} to {preprocessed_file}")
+            input_file = preprocessed_file
+        except Exception as e:
+            print(f"Error during preprocessing: {e}")
+            return
+    
+    # Convert the description file to access pattern
+    converter.convert_file(input_file, args.output_file)
     
     # Run example simulation with built-in patterns
     run_file_based_simulation(args.duration, args.output_file, args.output_dir, config_manager, args.repeat_times, args.no_feedback)
