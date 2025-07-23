@@ -34,7 +34,7 @@ input file example:
 
 output file example: (suppose total number of banks is 16, stack height is 4)
 #step,read_0,read_1,...,read_{total_number_of_banks-1},write_0,write_1,...,write_{total_number_of_banks-1}
-0,2,3,5,1,3,5,3,2,1,4,5,6,4,2,3,6,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+0,2,3,5,1,3,5,3,2,1,4,5,6,4,2,3,6,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 1,8,15,3,12,7,14,2,10,6,13,1,9,11,5,4,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 2,16,13,1,14,11,2,15,12,9,0,13,10,7,4,1,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 3,12,9,5,13,10,6,14,11,7,3,15,12,8,4,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -62,7 +62,7 @@ class Dsc2AccessConverter:
     
     def __init__(self, total_banks, bank_size, stack_height, clock_freq, 
                  bank_per_row=None, bank_per_col=None, group_rows=None, 
-                 group_cols=None, num_groups=None, debug=False):
+                 group_cols=None, num_groups=None, debug=False, distribute_across_group=False, distribution_noise=0.2):
         """
         Initialize the converter with memory configuration.
         
@@ -77,6 +77,8 @@ class Dsc2AccessConverter:
             group_cols (int, optional): Number of columns per group
             num_groups (int, optional): Number of bank groups
             debug (bool): Enable debug output
+            distribute_across_group (bool): Distribute access across all banks in group with noise
+            distribution_noise (float): Noise level for distribution (0.0 to 1.0, default 0.2)
         """
         self.total_banks = total_banks
         self.bank_size = bank_size
@@ -88,6 +90,8 @@ class Dsc2AccessConverter:
         self.group_cols = group_cols
         self.num_groups = num_groups
         self.debug = debug
+        self.distribute_across_group = distribute_across_group
+        self.distribution_noise = distribution_noise
         
         # Create bank group mapping
         self.bank_mapping = self._get_bank_group_mapping()
@@ -98,6 +102,8 @@ class Dsc2AccessConverter:
             print(f"DEBUG:   bank_size = {self.bank_size} MB")
             print(f"DEBUG:   stack_height = {self.stack_height}")
             print(f"DEBUG:   clock_freq = {self.clock_freq} MHz")
+            print(f"DEBUG:   distribute_across_group = {self.distribute_across_group}")
+            print(f"DEBUG:   distribution_noise = {self.distribution_noise}")
             print(f"DEBUG:   bank_mapping = {self.bank_mapping}")
     
     def _get_bank_group_mapping(self):
@@ -201,9 +207,10 @@ class Dsc2AccessConverter:
             print(f"DEBUG:   banks_in_group = {banks_in_group}")
             print(f"DEBUG:   starting_stack = {starting_stack}")
             print(f"DEBUG:   bank_size = {self.bank_size} MB = {self.bank_size * 1024 * 1024} bytes")
+            print(f"DEBUG:   distribute_across_group = {self.distribute_across_group}")
         
-        # If starting_stack is specified, filter banks to only those from that stack
-        if starting_stack is not None:
+        # If starting_stack is specified and NOT distributing across group, filter banks to only those from that stack
+        if starting_stack is not None and not self.distribute_across_group:
             banks_per_stack = self.total_banks // self.stack_height
             stack_start_bank = starting_stack * banks_per_stack
             stack_end_bank = (starting_stack + 1) * banks_per_stack
@@ -226,86 +233,134 @@ class Dsc2AccessConverter:
         # Initialize bank accesses
         bank_accesses = {bank: 0 for bank in banks_in_group}
         
-        remaining_amount = access_amount_bytes
-        current_bank_index = starting_bank  # Start from the specified bank within the group
-        
-        # Sequential access: fill one bank completely before moving to the next
-        while remaining_amount > 0 and current_bank_index < len(banks_in_group):
-            current_bank = banks_in_group[current_bank_index]
-            bank_capacity = self.bank_size * 1024 * 1024  # Convert MB to bytes
-            
+        if self.distribute_across_group:
+            # Distribute access across ALL banks in the group with noise
             if self.debug:
-                print(f"DEBUG:   processing bank {current_bank} (index {current_bank_index})")
-                print(f"DEBUG:     remaining_amount = {remaining_amount} bytes")
-                print(f"DEBUG:     bank_capacity = {bank_capacity} bytes")
+                print(f"DEBUG:   distributing across ALL {len(banks_in_group)} banks with noise")
+                print(f"DEBUG:   all banks in group {bank_group}: {banks_in_group}")
             
-            if remaining_amount <= bank_capacity:
-                # This bank can handle the remaining amount
-                # Calculate number of accesses based on lanewidth
-                accesses = int(remaining_amount / lanewidth)
-                bank_accesses[current_bank] = accesses
-                remaining_amount = 0
+            # Calculate total number of accesses needed
+            total_accesses = int(access_amount_bytes / lanewidth)
+            
+            if total_accesses > 0:
+                # Generate distribution weights with noise for ALL banks
+                weights = np.random.normal(1.0, self.distribution_noise, len(banks_in_group))
+                weights = np.maximum(weights, 0.1)  # Ensure minimum weight
+                weights = weights / np.sum(weights)  # Normalize to sum to 1
+                
+                # Distribute accesses according to weights to ALL banks
+                for i, bank in enumerate(banks_in_group):
+                    bank_accesses[bank] = int(total_accesses * weights[i])
+                
+                # Ensure at least one access per bank if there are enough total accesses
+                if total_accesses >= len(banks_in_group):
+                    for bank in banks_in_group:
+                        if bank_accesses[bank] == 0:
+                            bank_accesses[bank] = 1
+                
+                # If we have fewer total accesses than banks, distribute evenly with noise
+                if total_accesses < len(banks_in_group):
+                    # Distribute the accesses evenly across all banks with some randomness
+                    base_accesses_per_bank = total_accesses // len(banks_in_group)
+                    remaining_accesses = total_accesses % len(banks_in_group)
+                    
+                    # Add base accesses to all banks
+                    for bank in banks_in_group:
+                        bank_accesses[bank] = base_accesses_per_bank
+                    
+                    # Distribute remaining accesses randomly
+                    if remaining_accesses > 0:
+                        import random
+                        selected_banks = random.sample(banks_in_group, remaining_accesses)
+                        for bank in selected_banks:
+                            bank_accesses[bank] += 1
+                
                 if self.debug:
-                    print(f"DEBUG:     bank {current_bank} can handle remaining amount")
-                    print(f"DEBUG:     accesses = int({remaining_amount} / {lanewidth}) = {accesses}")
-            else:
-                # This bank is fully utilized
-                accesses = int(bank_capacity / lanewidth)
-                bank_accesses[current_bank] = accesses
-                remaining_amount -= bank_capacity
-                current_bank_index += 1
+                    print(f"DEBUG:   total_accesses = {total_accesses}")
+                    print(f"DEBUG:   weights = {weights}")
+                    print(f"DEBUG:   distributed_accesses = {bank_accesses}")
+        else:
+            # Original sequential access behavior
+            remaining_amount = access_amount_bytes
+            current_bank_index = starting_bank  # Start from the specified bank within the group
+            
+            # Sequential access: fill one bank completely before moving to the next
+            while remaining_amount > 0 and current_bank_index < len(banks_in_group):
+                current_bank = banks_in_group[current_bank_index]
+                bank_capacity = self.bank_size * 1024 * 1024  # Convert MB to bytes
+                
                 if self.debug:
-                    print(f"DEBUG:     bank {current_bank} fully utilized")
-                    print(f"DEBUG:     accesses = int({bank_capacity} / {lanewidth}) = {accesses}")
+                    print(f"DEBUG:   processing bank {current_bank} (index {current_bank_index})")
                     print(f"DEBUG:     remaining_amount = {remaining_amount} bytes")
-        
-        # if still remaining amount, map to the next stack until all remaining amount is mapped
-        # If there is still remaining_amount after filling all banks in the current stack,
-        # continue mapping to the next stack(s) in a round-robin fashion until all remaining_amount is mapped.
-        # This only applies if stack_height > 1 (i.e., multiple stacks exist).
-        next_stack = (starting_stack + 1) % self.stack_height if self.stack_height > 1 else starting_stack
-        while remaining_amount > 0 and self.stack_height > 1:
-            # Get banks in the same group for the next stack
-            stack_start_bank = next_stack * self.total_banks // self.stack_height # This line was incorrect, should be self.bank_per_row * self.bank_per_col
-            stack_end_bank = stack_start_bank + self.total_banks // self.stack_height # This line was incorrect, should be self.bank_per_row * self.bank_per_col
-            banks_in_next_stack = [
-                bank for bank in self.bank_mapping[bank_group]
-                if stack_start_bank <= bank < stack_end_bank
-            ]
-            if not banks_in_next_stack:
-                # No banks in this stack for this group, skip to next stack
+                    print(f"DEBUG:     bank_capacity = {bank_capacity} bytes")
+                
+                if remaining_amount <= bank_capacity:
+                    # This bank can handle the remaining amount
+                    # Calculate number of accesses based on lanewidth
+                    accesses = int(remaining_amount / lanewidth)
+                    bank_accesses[current_bank] = accesses
+                    remaining_amount = 0
+                    if self.debug:
+                        print(f"DEBUG:     bank {current_bank} can handle remaining amount")
+                        print(f"DEBUG:     accesses = int({remaining_amount} / {lanewidth}) = {accesses}")
+                else:
+                    # This bank is fully utilized
+                    accesses = int(bank_capacity / lanewidth)
+                    bank_accesses[current_bank] = accesses
+                    remaining_amount -= bank_capacity
+                    current_bank_index += 1
+                    if self.debug:
+                        print(f"DEBUG:     bank {current_bank} fully utilized")
+                        print(f"DEBUG:     accesses = int({bank_capacity} / {lanewidth}) = {accesses}")
+                        print(f"DEBUG:     remaining_amount = {remaining_amount} bytes")
+            
+            # if still remaining amount, map to the next stack until all remaining amount is mapped
+            # If there is still remaining_amount after filling all banks in the current stack,
+            # continue mapping to the next stack(s) in a round-robin fashion until all remaining_amount is mapped.
+            # This only applies if stack_height > 1 (i.e., multiple stacks exist).
+            next_stack = (starting_stack + 1 + self.stack_height) % self.stack_height if self.stack_height > 1 else starting_stack
+            while remaining_amount > 0 and self.stack_height > 1:
+                # Get banks in the same group for the next stack
+                stack_start_bank = next_stack * self.total_banks // self.stack_height # This line was incorrect, should be self.bank_per_row * self.bank_per_col
+                stack_end_bank = stack_start_bank + self.total_banks // self.stack_height # This line was incorrect, should be self.bank_per_row * self.bank_per_col
+                banks_in_next_stack = [
+                    bank for bank in self.bank_mapping[bank_group]
+                    if stack_start_bank <= bank < stack_end_bank
+                ]
+                if not banks_in_next_stack:
+                    # No banks in this stack for this group, skip to next stack
+                    next_stack = (next_stack + 1) % self.stack_height
+                    # If we've looped all stacks and found nothing, break to avoid infinite loop
+                    if next_stack == starting_stack:
+                        break
+                    continue
+                # Fill banks in the next stack sequentially
+                for bank in banks_in_next_stack:
+                    bank_capacity = self.bank_size * 1024 * 1024  # MB to bytes
+                    already_accessed = bank_accesses.get(bank, 0)
+                    # Only fill if not already filled in this round
+                    if already_accessed == 0:
+                        if remaining_amount <= bank_capacity:
+                            accesses = int(remaining_amount / lanewidth)
+                            bank_accesses[bank] = accesses
+                            remaining_amount = 0
+                            if self.debug:
+                                print(f"DEBUG:     (extra stack) bank {bank} can handle remaining amount")
+                                print(f"DEBUG:     accesses = int({remaining_amount} / {lanewidth}) = {accesses}")
+                            break  # Done mapping
+                        else:
+                            accesses = int(bank_capacity / lanewidth)
+                            bank_accesses[bank] = accesses
+                            remaining_amount -= bank_capacity
+                            if self.debug:
+                                print(f"DEBUG:     (extra stack) bank {bank} fully utilized")
+                                print(f"DEBUG:     accesses = int({bank_capacity} / {lanewidth}) = {accesses}")
+                                print(f"DEBUG:     remaining_amount = {remaining_amount} bytes")
+                # Move to next stack
                 next_stack = (next_stack + 1) % self.stack_height
-                # If we've looped all stacks and found nothing, break to avoid infinite loop
+                # # If we've looped all stacks, break to avoid infinite loop
                 if next_stack == starting_stack:
                     break
-                continue
-            # Fill banks in the next stack sequentially
-            for bank in banks_in_next_stack:
-                bank_capacity = self.bank_size * 1024 * 1024  # MB to bytes
-                already_accessed = bank_accesses.get(bank, 0)
-                # Only fill if not already filled in this round
-                if already_accessed == 0:
-                    if remaining_amount <= bank_capacity:
-                        accesses = int(remaining_amount / lanewidth)
-                        bank_accesses[bank] = accesses
-                        remaining_amount = 0
-                        if self.debug:
-                            print(f"DEBUG:     (extra stack) bank {bank} can handle remaining amount")
-                            print(f"DEBUG:     accesses = int({remaining_amount} / {lanewidth}) = {accesses}")
-                        break  # Done mapping
-                    else:
-                        accesses = int(bank_capacity / lanewidth)
-                        bank_accesses[bank] = accesses
-                        remaining_amount -= bank_capacity
-                        if self.debug:
-                            print(f"DEBUG:     (extra stack) bank {bank} fully utilized")
-                            print(f"DEBUG:     accesses = int({bank_capacity} / {lanewidth}) = {accesses}")
-                            print(f"DEBUG:     remaining_amount = {remaining_amount} bytes")
-            # Move to next stack
-            next_stack = (next_stack + 1) % self.stack_height
-            # # If we've looped all stacks, break to avoid infinite loop
-            if next_stack == starting_stack:
-                break
 
         if self.debug:
             print(f"DEBUG:   final bank_accesses = {bank_accesses}")
@@ -412,6 +467,89 @@ class Dsc2AccessConverter:
             if self.debug:
                 print(f"DEBUG: processing millisecond {ms}")
             
+            # If distribute_across_group is enabled, ensure ALL banks in the group get some access
+            if self.distribute_across_group and operation_timeline:
+                # Get all banks in the group (assuming all operations are in the same group)
+                all_banks_in_group = set()
+                for op in operation_timeline:
+                    all_banks_in_group.update(self.bank_mapping[op['bank_group']])
+                
+                if self.debug:
+                    print(f"DEBUG:   distribute_across_group enabled, ensuring ALL {len(all_banks_in_group)} banks get access")
+                
+                # Calculate original total access amounts and preserve them
+                original_total_read = 0
+                original_total_write = 0
+                original_total_accesses = 0
+                
+                for op in operation_timeline:
+                    op_total_accesses = sum(op['bank_accesses'].values())
+                    original_total_accesses += op_total_accesses
+                    if op['type'] == 'read':
+                        original_total_read += op_total_accesses
+                    elif op['type'] == 'write':
+                        original_total_write += op_total_accesses
+                
+                if original_total_accesses > 0:
+                    # Calculate read/write ratios to preserve original proportions
+                    read_ratio = original_total_read / original_total_accesses if original_total_accesses > 0 else 0.6
+                    write_ratio = original_total_write / original_total_accesses if original_total_accesses > 0 else 0.4
+                    
+                    if self.debug:
+                        print(f"DEBUG:   original_total_accesses = {original_total_accesses}")
+                        print(f"DEBUG:   read_ratio = {read_ratio:.3f}, write_ratio = {write_ratio:.3f}")
+                    
+                    # Distribute access across ALL banks with noise while preserving total
+                    import numpy as np
+                    weights = np.random.normal(1.0, self.distribution_noise, len(all_banks_in_group))
+                    weights = np.maximum(weights, 0.1)  # Ensure minimum weight
+                    weights = weights / np.sum(weights)  # Normalize to sum to 1
+                    
+                    # Distribute original total across all banks while preserving total power
+                    # Calculate adaptive scaling factor based on power characteristics
+                    # We need to estimate how much power increases when distributing across all banks
+                    # and scale down accordingly to preserve total power
+                    
+                    # Estimate power scaling: when distributing across N banks, power typically increases
+                    # by a factor related to the number of active banks and their power characteristics
+                    num_banks_in_group = len(all_banks_in_group)
+                    
+                    
+                    # Calculate adaptive scaling factor using power law
+                    scale_factor = 1.
+
+                    if self.debug:
+                        print(f"DEBUG:   adaptive scaling: {num_banks_in_group} banks -> scale_factor = {scale_factor}")
+                    
+                    for i, bank in enumerate(sorted(all_banks_in_group)):
+                        # Calculate proportional access for this bank, scaled down to preserve total power
+                        bank_total_accesses = int(original_total_accesses * weights[i] / scale_factor)
+                        
+                        if bank_total_accesses > 0:
+                            # Preserve original read/write ratios
+                            bank_read_accesses = int(bank_total_accesses * read_ratio)
+                            bank_write_accesses = int(bank_total_accesses * write_ratio)
+                            
+                            if bank_read_accesses > 0:
+                                read_accesses[bank] += bank_read_accesses/max_duration
+                                read_lanewidths[bank] = global_max_lanewidth
+                            if bank_write_accesses > 0:
+                                write_accesses[bank] += bank_write_accesses/max_duration
+                                write_lanewidths[bank] = global_max_lanewidth
+                    
+                    if self.debug:
+                        actual_total = sum(read_accesses) + sum(write_accesses)
+                        print(f"DEBUG:   distributed {original_total_accesses} accesses across {len(all_banks_in_group)} banks")
+                        print(f"DEBUG:   actual total = {actual_total} (should be ~{original_total_accesses})")
+                    
+                    if self.debug:
+                        print(f"DEBUG:   distributed {original_total_accesses} accesses across {len(all_banks_in_group)} banks")
+                    
+                    # Add the distributed access to the timeline
+                    timeline.append((read_accesses, write_accesses, read_lanewidths, write_lanewidths))
+                    continue  # Skip the normal operation processing
+            
+            # Normal operation processing (when distribute_across_group is disabled)
             for op in operation_timeline:
                 banks_in_group = self.bank_mapping[op['bank_group']]
                 total_accesses = sum(op['bank_accesses'].values())
@@ -547,6 +685,9 @@ class Dsc2AccessConverter:
                     
                     # Start new step
                     parts = line.split()
+                    if self.debug:
+                        print(f"DEBUG: parsing line: '{line}'")
+                        print(f"DEBUG: parts = {parts}")
                     current_step = int(parts[0])
                     current_operations = []
                     
@@ -863,6 +1004,10 @@ def parse_arguments():
     parser.add_argument('--no-split-on-total-capacity', action='store_true', help='Disable splitting on total capacity')
     parser.add_argument('--no-split-on-stack-capacity', action='store_true', help='Disable splitting on stack capacity')
     
+    # New arguments for distribution
+    parser.add_argument('--distribute-across-group', action='store_true', help='Distribute access across all banks in group with noise')
+    parser.add_argument('--distribution-noise', type=float, default=0.2, help='Noise level for distribution (0.0 to 1.0, default 0.2)')
+    
     return parser.parse_args()
 
 
@@ -883,6 +1028,8 @@ def main():
         print(f"DEBUG:   num_groups = {args.num_groups}")
         print(f"DEBUG:   stack_height = {args.stack_height}")
         print(f"DEBUG:   clock_freq = {args.clock_freq} MHz")
+        print(f"DEBUG:   distribute_across_group = {args.distribute_across_group}")
+        print(f"DEBUG:   distribution_noise = {args.distribution_noise}")
     
     # Create converter instance
     converter = Dsc2AccessConverter(
@@ -895,7 +1042,9 @@ def main():
         group_rows=args.group_rows,
         group_cols=args.group_cols,
         num_groups=args.num_groups,
-        debug=args.debug
+        debug=args.debug,
+        distribute_across_group=args.distribute_across_group,
+        distribution_noise=args.distribution_noise
     )
     
     # Handle preprocessing if requested

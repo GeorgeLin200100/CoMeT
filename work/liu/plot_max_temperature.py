@@ -11,15 +11,16 @@ import numpy as np
 from pathlib import Path
 import argparse
 
-def read_temperature_file(file_path):
+def read_temperature_file(file_path, specific_bank=None):
     """
-    Read temperature.trace file and return max temperature for each time step.
+    Read temperature.trace file and return temperature data.
     
     Args:
         file_path (str): Path to temperature.trace file
+        specific_bank (int, optional): If specified, return only this bank's temperature
         
     Returns:
-        tuple: (time_points, max_temperatures, folder_name)
+        tuple: (time_points, temperatures, folder_name)
     """
     try:
         # Read the file with tab separator
@@ -28,33 +29,48 @@ def read_temperature_file(file_path):
         # Get folder name for legend
         folder_name = os.path.basename(os.path.dirname(file_path))
         
-        # Exclude columns with names starting with "LC_"
-        columns_to_exclude = [col for col in df.columns if col.startswith('LC_')]
-        df_filtered = df.drop(columns=columns_to_exclude)
-        
-        print(f"  Excluded {len(columns_to_exclude)} LC_* columns from {folder_name}")
-        print(f"  Remaining columns: {len(df_filtered.columns)}")
-        
-        # Calculate max temperature for each row (excluding LC_* columns)
-        max_temps = df_filtered.max(axis=1)
+        if specific_bank is not None:
+            # Plot specific bank temperature
+            bank_column = f'B_{specific_bank}'
+            if bank_column in df.columns:
+                temperatures = df[bank_column].values
+                print(f"  Plotting {bank_column} temperature from {folder_name}")
+            else:
+                print(f"  Warning: {bank_column} not found in {folder_name}, using max temperature")
+                # Fallback to max temperature if specific bank not found
+                columns_to_exclude = [col for col in df.columns if col.startswith('LC_')]
+                df_filtered = df.drop(columns=columns_to_exclude)
+                temperatures = df_filtered.max(axis=1).values
+        else:
+            # Original behavior: plot max temperature
+            # Exclude columns with names starting with "LC_"
+            columns_to_exclude = [col for col in df.columns if col.startswith('LC_')]
+            df_filtered = df.drop(columns=columns_to_exclude)
+            
+            print(f"  Excluded {len(columns_to_exclude)} LC_* columns from {folder_name}")
+            print(f"  Remaining columns: {len(df_filtered.columns)}")
+            
+            # Calculate max temperature for each row (excluding LC_* columns)
+            temperatures = df_filtered.max(axis=1).values
         
         # Time points in milliseconds (1ms per row)
-        time_points = np.arange(len(max_temps))  # 0, 1, 2, ... ms
+        time_points = np.arange(len(temperatures))  # 0, 1, 2, ... ms
         
-        return time_points, max_temps.values, folder_name
+        return time_points, temperatures, folder_name
         
     except Exception as e:
         print(f"Error reading {file_path}: {e}")
         return None, None, None
 
-def plot_max_temperature_comparison(folders, output_file="max_temperature_comparison.png", show_peaks=True):
+def plot_max_temperature_comparison(folders, output_file="max_temperature_comparison.png", show_peaks=True, specific_bank=None):
     """
-    Plot maximum temperature trends from multiple folders.
+    Plot temperature trends from multiple folders.
     
     Args:
         folders (list): List of folder paths containing temperature.trace files
         output_file (str): Output filename for the plot
         show_peaks (bool): Whether to show peak temperature annotations
+        specific_bank (int, optional): If specified, plot this specific bank's temperature
     """
     plt.figure(figsize=(12, 8))
     
@@ -71,46 +87,48 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
             print(f"Warning: {temp_file} not found, skipping...")
             continue
             
-        time_points, max_temps, folder_name = read_temperature_file(temp_file)
+        time_points, temperatures, folder_name = read_temperature_file(temp_file, specific_bank)
         
         if time_points is not None:
             # Store data for peak detection
             all_data.append({
                 'time_points': time_points,
-                'max_temps': max_temps,
+                'temperatures': temperatures,
                 'folder_name': folder_name,
                 'color': colors[color_idx % len(colors)]
             })
             
             # Plot with different color for each folder
             color = colors[color_idx % len(colors)]
-            plt.plot(time_points, max_temps, 
+            plt.plot(time_points, temperatures, 
                     label=folder_name, 
                     color=color, 
                     linewidth=2,
                     alpha=0.9)
             
             # Print statistics
-            print(f"\n{folder_name}:")
-            print(f"  Max temperature: {max_temps.max():.2f}°C")
-            print(f"  Min temperature: {max_temps.min():.2f}°C")
-            print(f"  Average max temperature: {max_temps.mean():.2f}°C")
+            temp_type = f"Bank {specific_bank}" if specific_bank is not None else "Max"
+            print(f"\n{folder_name} ({temp_type}):")
+            print(f"  Max temperature: {temperatures.max():.2f}°C")
+            print(f"  Min temperature: {temperatures.min():.2f}°C")
+            print(f"  Average temperature: {temperatures.mean():.2f}°C")
             print(f"  Duration: {len(time_points)} ms")
             
             color_idx += 1
     
     # Find global maximum and minimum temperatures
     if all_data:
-        global_max = max(data['max_temps'].max() for data in all_data)
-        global_min = min(data['max_temps'].min() for data in all_data)
+        global_max = max(data['temperatures'].max() for data in all_data)
+        global_min = min(data['temperatures'].min() for data in all_data)
         
-        print(f"\nGlobal Temperature Statistics:")
+        temp_type = f"Bank {specific_bank}" if specific_bank is not None else "Max"
+        print(f"\nGlobal Temperature Statistics ({temp_type}):")
         print(f"  Global max temperature: {global_max:.2f}°C")
         print(f"  Global min temperature: {global_min:.2f}°C")
         
         # Handle peak detection or global max/min marking
         if show_peaks:
-            # Define significant temperature threshold (e.g., 90% of global max)
+            # Define significant temperature threshold (e.g., 30% of range above min)
             temp_threshold = global_min + 0.3 * (global_max - global_min)
             
             print(f"  Temperature threshold for peaks: {temp_threshold:.2f}°C")
@@ -118,7 +136,7 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
             # Find peaks for each dataset
             for data in all_data:
                 time_points = data['time_points']
-                max_temps = data['max_temps']
+                temperatures = data['temperatures']
                 folder_name = data['folder_name']
                 color = data['color']
                 
@@ -126,20 +144,20 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
                 try:
                     from scipy.signal import find_peaks
                     # Find peaks above threshold
-                    peaks, _ = find_peaks(max_temps, height=temp_threshold, distance=10)
+                    peaks, _ = find_peaks(temperatures, height=temp_threshold, distance=10)
                 except ImportError:
                     # Simple peak detection
                     peaks = []
-                    for i in range(1, len(max_temps) - 1):
-                        if (max_temps[i] > temp_threshold and 
-                            max_temps[i] > max_temps[i-1] and 
-                            max_temps[i] > max_temps[i+1]):
+                    for i in range(1, len(temperatures) - 1):
+                        if (temperatures[i] > temp_threshold and 
+                            temperatures[i] > temperatures[i-1] and 
+                            temperatures[i] > temperatures[i+1]):
                             peaks.append(i)
                 
                 # Store peak data for annotation after plot setup
                 for peak_idx in peaks:
                     peak_time = time_points[peak_idx]
-                    peak_temp = max_temps[peak_idx]
+                    peak_temp = temperatures[peak_idx]
                     print(f"  {folder_name}: Peak at {peak_time}ms, Temperature: {peak_temp:.2f}°C")
         
         else:
@@ -147,12 +165,15 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
             print(f"\nMarking Global Max and Min:")
             # Note: Actual annotation will be done after plot setup for proper bounds checking
     
+    # Set appropriate labels based on whether we're plotting specific bank or max temperature
+    temp_type = f"Bank {specific_bank}" if specific_bank is not None else "Maximum"
     plt.xlabel('Time (ms)', fontsize=14, weight='bold')
-    plt.ylabel('Maximum Temperature (°C)', fontsize=14, weight='bold')
+    plt.ylabel(f'{temp_type} Temperature (°C)', fontsize=14, weight='bold')
+    
     if show_peaks:
-        plt.title(f'Maximum Temperature Comparison\n(Peaks marked)\n{output_file}', fontsize=16, weight='bold', pad=20)
+        plt.title(f'{temp_type} Temperature Comparison\n(Peaks marked)\n{output_file}', fontsize=16, weight='bold', pad=20)
     else:
-        plt.title(f'Maximum Temperature Comparison\n{output_file}', fontsize=16, weight='bold', pad=20)
+        plt.title(f'{temp_type} Temperature Comparison\n{output_file}', fontsize=16, weight='bold', pad=20)
     plt.legend(fontsize=12, framealpha=0.9, fancybox=True, shadow=True)
     plt.grid(True, alpha=0.4, linestyle='--', linewidth=0.8)
     
@@ -170,14 +191,14 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
         global_min_time = 0
         
         for data in all_data:
-            max_idx = np.argmax(data['max_temps'])
-            min_idx = np.argmin(data['max_temps'])
+            max_idx = np.argmax(data['temperatures'])
+            min_idx = np.argmin(data['temperatures'])
             
-            if data['max_temps'][max_idx] == global_max:
+            if data['temperatures'][max_idx] == global_max:
                 global_max_dataset = data
                 global_max_time = data['time_points'][max_idx]
             
-            if data['max_temps'][min_idx] == global_min:
+            if data['temperatures'][min_idx] == global_min:
                 global_min_dataset = data
                 global_min_time = data['time_points'][min_idx]
         
@@ -241,13 +262,13 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
     
     # Add peak annotations after plot setup (for proper bounds checking)
     if all_data and show_peaks:
-        # Define significant temperature threshold (e.g., 90% of global max)
+        # Define significant temperature threshold (e.g., 30% of range above min)
         temp_threshold = global_min + 0.3 * (global_max - global_min)
         
         # Find and annotate peaks for each dataset
         for data in all_data:
             time_points = data['time_points']
-            max_temps = data['max_temps']
+            temperatures = data['temperatures']
             folder_name = data['folder_name']
             color = data['color']
             
@@ -255,20 +276,20 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
             try:
                 from scipy.signal import find_peaks
                 # Find peaks above threshold
-                peaks, _ = find_peaks(max_temps, height=temp_threshold, distance=10)
+                peaks, _ = find_peaks(temperatures, height=temp_threshold, distance=10)
             except ImportError:
                 # Simple peak detection
                 peaks = []
-                for i in range(1, len(max_temps) - 1):
-                    if (max_temps[i] > temp_threshold and 
-                        max_temps[i] > max_temps[i-1] and 
-                        max_temps[i] > max_temps[i+1]):
+                for i in range(1, len(temperatures) - 1):
+                    if (temperatures[i] > temp_threshold and 
+                        temperatures[i] > temperatures[i-1] and 
+                        temperatures[i] > temperatures[i+1]):
                         peaks.append(i)
             
             # Annotate significant peaks
             for peak_idx in peaks:
                 peak_time = time_points[peak_idx]
-                peak_temp = max_temps[peak_idx]
+                peak_temp = temperatures[peak_idx]
                 
                 # Calculate annotation position with bounds checking
                 x_pos = peak_time
@@ -303,15 +324,17 @@ def plot_max_temperature_comparison(folders, output_file="max_temperature_compar
     plt.tight_layout(pad=1.0)
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     print(f"\nPlot saved as: {output_file}")
-    plt.show()
+    #plt.show()
 
 def main():
-    parser = argparse.ArgumentParser(description='Plot maximum temperature trends from multiple folders')
+    parser = argparse.ArgumentParser(description='Plot temperature trends from multiple folders')
     parser.add_argument('folders', nargs='+', help='Folders containing temperature.trace files')
     parser.add_argument('--output', '-o', default='max_temperature_comparison.png', 
                        help='Output filename for the plot (default: max_temperature_comparison.png)')
     parser.add_argument('--no-peaks', action='store_true', 
                        help='Disable peak temperature annotations on the plot')
+    parser.add_argument('--bank', '-b', type=int, 
+                       help='Plot specific bank temperature (e.g., --bank 0 for Bank 0)')
     
     args = parser.parse_args()
     
@@ -339,7 +362,12 @@ def main():
     show_peaks = not args.no_peaks
     print(f"Peak annotations: {'Enabled' if show_peaks else 'Disabled'}")
     
-    plot_max_temperature_comparison(valid_folders, args.output, show_peaks)
+    if args.bank is not None:
+        print(f"Plotting specific bank: Bank {args.bank}")
+    else:
+        print("Plotting maximum temperature across all banks")
+    
+    plot_max_temperature_comparison(valid_folders, args.output, show_peaks, args.bank)
 
 if __name__ == "__main__":
     # If no command line arguments, use the folders mentioned in the user query

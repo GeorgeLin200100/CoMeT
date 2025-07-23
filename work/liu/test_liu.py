@@ -209,6 +209,12 @@ def parse_arguments():
     parser.add_argument('--no_feedback', '-nf', default=False,
                        help='Disable feedback loop, hotspot will only run once (default: False)')
     
+    # Distribution options
+    parser.add_argument('--distribute-across-group', action='store_true',
+                       help='Distribute access across all banks in the group with noise')
+    parser.add_argument('--distribution-noise', type=float, default=0.2,
+                       help='Noise level for distribution (0.0 to 1.0, default: 0.2)')
+    
     # Preprocessing options
     parser.add_argument('--preprocess', action='store_true', 
                        help='Preprocess description file to split large operations')
@@ -257,9 +263,9 @@ def main():
         f"python3 ../../floorplanlib/create.py "
         f"--mode {config_manager.type_of_stack} "
         f"--cores {config_manager.cores_in_x}x{config_manager.cores_in_y} "
-        f"--corex {6.828/config_manager.cores_in_x}mm --corey {6.828/config_manager.cores_in_y}mm "
+        f"--corex {6/config_manager.cores_in_x}mm --corey {6/config_manager.cores_in_y}mm "
         f"--banks {config_manager.banks_in_x}x{config_manager.banks_in_y}x{config_manager.banks_in_z} "
-        f"--bankx {6.828/config_manager.banks_in_x}mm --banky {6.828/config_manager.banks_in_y}mm "
+        f"--bankx {6/config_manager.banks_in_x}mm --banky {6/config_manager.banks_in_y}mm "
         f"--out ./config"
     )
     os.system(floorplan_cmd)
@@ -274,7 +280,9 @@ def main():
         group_rows=config_manager.group_rows, # each group has "group_rows" rows
         group_cols=config_manager.group_cols, # each group has "group_cols" columns
         num_groups=config_manager.num_groups,
-        debug=False
+        debug=False,
+        distribute_across_group=args.distribute_across_group,
+        distribution_noise=args.distribution_noise
     )
     
     # Handle preprocessing if requested

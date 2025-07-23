@@ -1,0 +1,11 @@
+#Step    (read/write@Bank Group@Starting Stack@Starting Bank@Access Amount(in MB)@lanewidth(in Byte)) * N
+0       read@0@0@0@35000@1024
+1       read@0@0@0@35000@1024
+2       read@0@0@0@35000@1024
+3       read@0@0@0@35000@1024
+4       read@0@0@0@35000@1024
+5       read@0@0@0@35000@1024
+6       read@0@0@0@35000@1024
+7       read@0@0@0@35000@1024
+8       read@0@0@0@35000@1024
+9       read@0@0@0@35000@1024

@@ -429,9 +429,14 @@ class StandaloneMemTherm:
         # )
         
         # Optimized command with performance improvements:
-        self.hotspot_command = "{} -c {} -p {} -o {} -model_secondary 1 -model_type grid -steady_file {} -all_transient_file {} -grid_steady_file {} -steady_state_print_disable 1 -l 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, -type {} -sampling_intvl {} -grid_layer_file {} -detailed_3D on -leakage_used 0".format(
+        # self.hotspot_command = "{} -c {} -p {} -o {} -model_secondary 1 -model_type grid -steady_file {} -all_transient_file {} -grid_steady_file {} -steady_state_print_disable 1 -l 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, -type {} -sampling_intvl {} -grid_layer_file {} -detailed_3D on -leakage_used 0".format(
+        #     executable, hotspot_config_file, self.power_trace_file, self.temperature_trace_file,
+        #     self.steady_temp_file, self.all_transient_file, self.grid_steady_file,
+        #     self.type_of_stack, self.interval_sec, hotspot_layer_file
+        # )
+        self.hotspot_command = "{} -c {} -p {} -o {} -model_secondary 1 -model_type grid -all_transient_file {} -steady_state_print_disable 1 -l 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, -type {} -sampling_intvl {} -grid_layer_file {} -detailed_3D on -leakage_used 0".format(
             executable, hotspot_config_file, self.power_trace_file, self.temperature_trace_file,
-            self.steady_temp_file, self.all_transient_file, self.grid_steady_file,
+            self.all_transient_file,
             self.type_of_stack, self.interval_sec, hotspot_layer_file
         )
     
@@ -618,10 +623,14 @@ class StandaloneMemTherm:
             f.write(bank_mode_trace_string)
     
     def execute_hotspot(self):
-        """Execute hotspot thermal simulation (optimized)"""
+        """Execute hotspot thermal simulation starting from ambient temperature"""
         cmd = self.hotspot_command
-        if os.path.exists(self.init_file):
-            cmd += ' -init_file ' + self.init_file
+        
+        # Comment out the init_file parameter to start from ambient temperature
+        # instead of using steady state temperature
+        # if os.path.exists(self.init_file):
+        #     cmd += ' -init_file ' + self.init_file
+        
         # Old (non-optimized) version:
         # result = os.system(cmd)
         # if result == 0:
